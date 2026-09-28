@@ -1,0 +1,167 @@
+# seshat
+
+An MCP server that **records a screen and narrates the take**.
+
+seshat captures an output (or a region of one) into a silent artifact, ingests
+the timeline streams that other tool servers publish while the take runs, and
+then muxes a synthesized narration track — aligned to those real events, with
+styled captions burned in — over the recorded video. The prose is the caller's;
+the timing, the speech, the captions and the container are seshat's.
+
+It is named after the Egyptian goddess of writing, measurement and record-keeping.
+
+## What it is, and what it is not
+
+- **It is a recorder and a narrator.** It owns capture, the take timeline, speech
+  synthesis, caption layout and muxing.
+- **It is not a desktop controller.** It never clicks, types, or focuses
+  anything. The actions a take documents are performed by other tool servers;
+  they reach seshat as published event streams. That split is deliberate: a
+  recoder that also drives the desktop cannot record a desktop driven by
+  anything else.
+- **It embeds no model.** Narration prose is written by the calling agent and
+  passed in. seshat is deterministic: same inputs, same timeline, same schedule.
+
+## Requirements
+
+- Python 3.10+ (standard library only — `dependencies = []` is a hard contract).
+- `wf-recorder` for capture, `ffmpeg` + `ffprobe` for finalization, muxing and
+  probing. `swaymsg` (or a `SWAYSOCK` exposing the same JSON) to resolve output
+  geometry. A missing binary is reported as a clear tool error, never an import
+  failure.
+- Optional: `edge-tts` (keyless, **network**) or `piper` (offline, needs a voice
+  model) for narration; `tesseract` for OCR of scene keys.
+
+`make check` runs the unit tests, bytecode compilation, and the file-length check.
+
+## Install
+
+```bash
+uv venv
+uv pip install -e .
+seshat --doctor     # what this host can record and narrate with
+seshat --self-test  # non-mutating checks
+```
+
+Register with an MCP harness:
+
+```bash
+hermes mcp add seshat --command /path/to/venv/bin/seshat
+codex mcp add seshat -- /path/to/venv/bin/seshat
+```
+
+## Recording a take
+
+```
+recording_start(format="mp4", max_duration_seconds=120)
+   ... the demonstration happens ...
+recording_stop()
+recording_status()        # poll until phase == completed | failed
+recording_timeline()      # the ingested events, with recording-relative t_ms
+```
+
+One take may be active at a time. Artifacts are written to
+`$XDG_RUNTIME_DIR/seshat/recordings` (0700, files 0600) and do not survive a
+logout; copy anything you want to keep.
+
+A completed take reports two durations, and they are deliberately different:
+`capture_elapsed_seconds` is how long capture ran (including the recorder's
+shutdown, which can take seconds), and `media_duration_seconds` is the playable
+picture. `latest_event_ms` and `events_beyond_media` say how far the ingested
+timeline reaches and how much of it has no picture to point at. A take stopped by
+its own deadline can lose its tail, so the two are not expected to match.
+
+```bash
+make check                         # unit tests, compilation, file-length ceiling
+SESHAT_INTEGRATION=1 make integration   # records the live screen; opt in explicitly
+```
+
+### The timeline stream contract
+
+seshat cannot timestamp actions it does not perform. Any tool server that wants
+its actions to be narratable publishes them — one JSON object per line — to
+`$XDG_RUNTIME_DIR/seshat/streams/<source>.jsonl`:
+
+```json
+{"at_monotonic": 12345.678, "tool": "click", "ok": true,
+ "payload": {"x": 640, "y": 360}, "source": "computer-use-sway"}
+```
+
+- `at_monotonic` is required: CLOCK_MONOTONIC seconds, the value of
+  `time.monotonic()` in the emitting process. That clock is host-wide, which is
+  what makes an unrelated process's timestamps directly comparable with the
+  recording epoch — no handshake, no session id.
+- `tool` is required. `ok` (default true), `payload` (default `{}`) and `source`
+  (default: the file stem) are optional.
+- Each emitter owns its file and should truncate it when a new session starts.
+- Events are filtered to the take's own capture window. Anything published
+  before `recording_start` or after capture stopped describes something the
+  video does not contain, and is not an anchor.
+- Malformed, oversized or unreadable lines are counted in the timeline's
+  `sources` report and skipped. A broken stream can never destroy a take.
+
+Pass `timeline_sources` to `recording_start` to ingest specific files instead of
+everything in the streams directory; explicit paths are validated when the take
+starts, not when it is finalized.
+
+## Narrating a take
+
+Read the timeline first, then write prose against the event ids that are really
+there:
+
+```
+recording_timeline()
+recording_voiceover(segments=[
+  {"anchor": {"event_id": 1}, "text": "..."},
+  {"anchor": {"at_ms": 8200},  "text": "..."}
+])
+recording_status()        # poll until phase == completed | failed
+```
+
+`recording_voiceover` synthesizes each segment, builds one audio track placed at
+the resolved anchors (with `offset_ms`, optional tempo compression via
+`fit="compress"`, and lead-silence trimming), muxes it over the existing video,
+and — unless `subtitles=false` — burns styled ASS captions. The video is only
+re-encoded when captions are burned; otherwise it is stream-copied. The result is
+re-validated: exactly one video stream plus exactly one audio stream.
+
+**Anchors are checked against the picture, not the timeline.** Both `event_id`
+and `at_ms` are validated against the playable video extent — the video stream's
+own duration, falling back to the container's — so speech cannot be placed after
+the last frame. An event id that exists but resolves past the end of the video is
+refused, with both numbers in the message, rather than anchored into silence.
+
+If `recording_timeline` reports no events, the demonstration was driven by a tool
+server that does not publish a stream. Anchor segments with `at_ms`, or use
+`recording_scenes` for approximate cuts. Scene cuts are secondary evidence;
+they are never the sync source.
+
+## What the events do and do not prove
+
+An event records that a tool call was **dispatched**, not that it visibly worked.
+The driving server is the only party that knows whether its action had the
+intended effect; a driver that returns `sent: true` without verifying the result
+will publish an event for an action that did nothing. Two open issues in the
+sibling project are exactly this shape: a modified key that arrived as an
+unmodified one, and a keystroke delivered to a window that had stolen focus.
+
+So narrate what the take shows. Use event ids to place a line in time, and ground
+its content in the video, in the driver's own verified payload, or in something
+you observed yourself — never in the mere existence of an event.
+
+## Security notes
+
+- `edge-tts` sends the narration prose to Microsoft. It is keyless but network
+  dependent. Install `piper` and a voice model (`voice`, or
+  `SESHAT_PIPER_MODEL`) to keep narration on the host.
+- Narration text is the caller's; seshat never reads it from the screen, so
+  nothing visible on screen becomes narration unless the agent says so.
+- Recordings and streams live under `$XDG_RUNTIME_DIR/seshat` with 0700 / 0600
+  permissions.
+
+## Related
+
+- [`computer-use-sway`](https://github.com/blackopsrepl/computer-use-sway) —
+  drives a Sway session and publishes the timeline stream that this server
+  ingests. Recording and narration were extracted from that project so that both
+  could stand on their own.

@@ -22,9 +22,19 @@ Guidance for coding agents working in this repository.
   event id from the take timeline or an explicit `at_ms`. The calling agent
   writes the narration prose; seshat owns timestamping, speech synthesis,
   alignment, captions and muxing.
+- **Every anchor is validated against the playable video extent**, taken from the
+  video stream with the container as fallback. An event that exists is not
+  thereby an anchor: one that resolves past the last frame is refused.
+- **Capture elapsed time and playable media duration are separate facts** and must
+  stay separate. `capture_elapsed_seconds` includes recorder shutdown escalation
+  and is not playable capture; `media_duration_seconds` is what ffprobe measures.
+  `events_beyond_media` counts ingested events with no picture to point at.
 - Event ids are positions in the take's ingested, time-ordered event list. They
   are provisional while a take records and final once it stops. Narration is
   only accepted on a completed take, so anchors are always final.
+- An event records that a tool call was dispatched, not that it visibly worked.
+  seshat never claims otherwise: payloads are published verbatim by the emitter
+  and passed through untouched.
 
 ## Project Structure
 
@@ -34,6 +44,8 @@ Guidance for coding agents working in this repository.
   parse, window-filter, merge.
 - `outputs.py`: the only session fact capture needs — active output geometry.
 - `media.py`: `ffprobe`-backed media probing.
+- `encoding.py`: encoder selection and every ffmpeg argv (capture, finalization,
+  narration mux, caption burn-in).
 - `recording.py`: take model, path/argument construction, artifact validation,
   finalization.
 - `timeline.py`: recording-relative timeline projection and sidecar.
@@ -44,6 +56,8 @@ Guidance for coding agents working in this repository.
 - `manager.py`: the single take lifecycle owner and `RECORDINGS`.
 - `tools.py` / `specs.py`: MCP tool wrappers and JSON schemas.
 - `server.py`: MCP protocol loop and CLI facade.
+- `scripts/check_file_length.py`: the file-length gate; `scripts/integration_deadline.py`:
+  the opt-in real-recorder deadline check (`make integration`).
 - `tests/`: deterministic unit tests plus `support.py` helpers.
 
 ## Engineering Rules
