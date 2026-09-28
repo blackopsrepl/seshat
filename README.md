@@ -33,6 +33,9 @@ It is named after the Egyptian goddess of writing, measurement and record-keepin
   model) for narration; `tesseract` for OCR of scene keys.
 
 `make check` runs the unit tests, bytecode compilation, and the file-length check.
+`make help` lists every target; `make ci-local` runs the whole gate plus a
+distribution build, and `make runtime` shows the streams, recordings and active
+take when something looks wrong.
 
 ## Install
 

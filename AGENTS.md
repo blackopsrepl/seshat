@@ -84,6 +84,9 @@ make check
 ```
 
 That runs the unit tests, bytecode compilation, and the file-length check.
+`make help` lists every target; `make ci-local` runs the whole gate plus a
+distribution build; `make pre-release` is the pre-tagging pass. `make integration`
+records the live screen, so it is never part of the gate.
 
 ## Documentation Surfaces
 
