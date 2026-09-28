@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.1](https://github.com/blackopsrepl/seshat/compare/v0.1.0...v0.1.1) (2026-09-28)
+
+
+### Build System
+
+* **make:** dress the build system in the SolverForge idiom bfa25b2
+* **release:** keep tooling-only releases visible in the changelog 9b445eb
+
 ## 0.1.0 (2026-09-28)
 
 
