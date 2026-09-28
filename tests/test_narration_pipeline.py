@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, media, narration, outputs, recording, server, streams, tts
+from seshat import core, encoding, media, narration, outputs, recording, server, streams, tts
 
 from support import *
 class NarrationArgvTests(unittest.TestCase):
@@ -75,7 +75,7 @@ class NarrationArgvTests(unittest.TestCase):
         from types import SimpleNamespace
 
         job = SimpleNamespace(artifact=server.Path("/tmp/a.webm"), fmt="webm", encoder="libsvtav1")
-        argv = recording.narration_mux_argv(
+        argv = encoding.narration_mux_argv(
             job, server.Path("/tmp/n.wav"), server.Path("/tmp/out.webm")
         )
         self.assertEqual(argv[:4], ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel"])
@@ -91,7 +91,7 @@ class NarrationArgvTests(unittest.TestCase):
         from types import SimpleNamespace
 
         job = SimpleNamespace(artifact=server.Path("/tmp/a.mp4"), fmt="mp4", encoder="libx264")
-        argv = recording.narration_mux_argv(
+        argv = encoding.narration_mux_argv(
             job, server.Path("/tmp/n.wav"), server.Path("/tmp/out.mp4")
         )
         self.assertEqual(argv[argv.index("-c:v") + 1], "copy")
@@ -280,12 +280,51 @@ class NarrationArtifactSourceTests(unittest.TestCase):
             self.tmp.name, capture_seconds=102.941, events=[event(500.0)]
         )
 
-    def probe_artifact(self, duration_seconds: str):
+    def probe_artifact(self, duration_seconds: str, video_duration: str | None = None):
+        streams = (
+            [{"codec_type": "video", "duration": video_duration}] if video_duration else []
+        )
         return patch.object(
             media,
             "probe_media",
-            return_value={"format": {"duration": duration_seconds}, "streams": []},
+            return_value={"format": {"duration": duration_seconds}, "streams": streams},
         )
+
+    def test_anchor_validation_prefers_the_video_stream_extent(self) -> None:
+        """A container can outlive its picture; an anchor must not land in the gap."""
+        job = self.trimmed_job()
+        with self.probe_artifact("57.0", video_duration="54.0"):
+            self.assertEqual(server.recording_duration_ms(job), 54000.0)
+            with self.assertRaises(server.ToolError) as ctx:
+                server.parse_narration_arguments(
+                    {"segments": [{"anchor": {"at_ms": 56000}, "text": "hi"}]}, job
+                )
+        self.assertIn("beyond the recording duration", str(ctx.exception))
+
+    def test_event_anchor_beyond_the_playable_video_is_refused(self) -> None:
+        """An ingested event can outlive the picture it is supposed to point at."""
+        job = completed_job(
+            self.tmp.name, capture_seconds=225.213, events=[event(209546.0)]
+        )
+        with self.probe_artifact("204.233"):
+            with self.assertRaises(server.ToolError) as ctx:
+                server.parse_narration_arguments(
+                    {"segments": [{"anchor": {"event_id": 1}, "text": "hi"}]}, job
+                )
+        message = str(ctx.exception)
+        self.assertIn("past the end of the playable video", message)
+        self.assertIn("209546", message)
+        self.assertIn("204233", message)
+
+    def test_event_anchor_inside_the_playable_video_is_accepted(self) -> None:
+        job = completed_job(
+            self.tmp.name, capture_seconds=225.213, events=[event(202000.0)]
+        )
+        with self.probe_artifact("204.233"):
+            request = server.parse_narration_arguments(
+                {"segments": [{"anchor": {"event_id": 1}, "text": "hi"}]}, job
+            )
+        self.assertEqual(request.segments[0].anchor_event_id, 1)
 
     def test_anchor_validation_uses_artifact_duration_not_capture_window(self) -> None:
         job = self.trimmed_job()
@@ -329,7 +368,7 @@ class NarrationArtifactSourceTests(unittest.TestCase):
             "mime_type": "video/webm",
             "width": 1920,
             "height": 1080,
-            "duration_seconds": 57.0,
+            "media_duration_seconds": 57.0,
             "frame_rate": 30.0,
         }
         with patch.object(core, "run_command", side_effect=fake_run):

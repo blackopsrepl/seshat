@@ -31,7 +31,23 @@ class TimelineDocumentTests(unittest.TestCase):
             document = server.timeline_document(job)
         self.assertEqual(document["event_count"], 1)
         self.assertEqual(document["events"][0]["t_ms"], 1200.0)
-        self.assertEqual(document["capture_seconds"], 7.5)
+        self.assertEqual(document["capture_elapsed_seconds"], 7.5)
+        self.assertIsNone(document["media_duration_seconds"])
+        self.assertEqual(document["latest_event_ms"], 1200.0)
+        self.assertEqual(document["events_beyond_media"], 0)
+
+    def test_document_flags_events_past_the_playable_video(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = completed_job(
+                tmpdir,
+                capture_seconds=225.213,
+                events=[event(500.0), event(209546.0)],
+            )
+            job.media_duration_ms = 204233.0
+            document = server.timeline_document(job)
+        self.assertEqual(document["media_duration_seconds"], 204.233)
+        self.assertEqual(document["events_beyond_media"], 1)
+        self.assertEqual(document["latest_event_ms"], 209546.0)
 
     def test_sidecar_round_trips(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

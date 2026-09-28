@@ -94,7 +94,7 @@ class ProbeAndValidateTests(unittest.TestCase):
         self.assertEqual(summary["container"], "webm")
         self.assertEqual(summary["mime_type"], "video/webm")
         self.assertEqual(summary["width"], 1280)
-        self.assertEqual(summary["duration_seconds"], 12.5)
+        self.assertEqual(summary["media_duration_seconds"], 12.5)
         self.assertEqual(summary["frame_rate"], 30.0)
 
     def test_webm_artifact_rejections(self) -> None:
@@ -162,6 +162,40 @@ class ProbeAndValidateTests(unittest.TestCase):
 
 
 class FinalizeRecordingTests(unittest.TestCase):
+    def unreadable_intermediate_job(self, tmpdir: str, auto_stopped: bool):
+        with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):
+            with patch.object(outputs, "get_outputs", return_value=single_output()):
+                job = recording.new_recording_job({"max_duration_seconds": 10})
+        os.close(job.log_fd)
+        job.auto_stopped = auto_stopped
+        return job
+
+    def test_unreadable_intermediate_names_the_deadline(self) -> None:
+        """A deadline-stopped recorder can leave a tail nobody wrote; say so."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = self.unreadable_intermediate_job(tmpdir, auto_stopped=True)
+            with patch.object(
+                media, "probe_video_stream", side_effect=server.ToolError("End of file")
+            ):
+                with self.assertRaises(server.ToolError) as ctx:
+                    server.finalize_recording(job)
+        message = str(ctx.exception)
+        self.assertIn("unreadable intermediate", message)
+        self.assertIn("deadline", message)
+        self.assertIn("End of file", message)
+
+    def test_unreadable_intermediate_without_a_deadline_stays_plain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = self.unreadable_intermediate_job(tmpdir, auto_stopped=False)
+            with patch.object(
+                media, "probe_video_stream", side_effect=server.ToolError("End of file")
+            ):
+                with self.assertRaises(server.ToolError) as ctx:
+                    server.finalize_recording(job)
+        message = str(ctx.exception)
+        self.assertIn("unreadable intermediate", message)
+        self.assertNotIn("deadline", message)
+
     def test_finalize_converts_then_validates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):
@@ -204,7 +238,7 @@ class FinalizeRecordingTests(unittest.TestCase):
             self.assertEqual(ffmpeg_argv[0], "ffmpeg")
             self.assertEqual(ffmpeg_argv[-1], str(job.artifact))
             self.assertIn("libsvtav1", ffmpeg_argv)
-            self.assertEqual(summary["duration_seconds"], 9.9)
+            self.assertEqual(summary["media_duration_seconds"], 9.9)
 
     def test_finalize_gif_uses_capture_width(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

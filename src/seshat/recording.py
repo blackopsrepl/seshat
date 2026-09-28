@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import secrets
 import subprocess
 import threading
@@ -10,18 +9,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import core, media, outputs, streams, timeline
+from . import core, encoding, media, outputs, streams, timeline
 
 
 RECORDING_FORMATS = ("mp4", "webm", "gif")
 RECORDING_MIME_TYPES = {"mp4": "video/mp4", "webm": "video/webm", "gif": "image/gif"}
 RECORDING_MAX_DURATION_SECONDS = {"mp4": 300.0, "webm": 300.0, "gif": 15.0}
 RECORDING_DEFAULT_DURATION_SECONDS = {"mp4": 60.0, "webm": 60.0, "gif": 15.0}
-RECORDING_CAPTURE_CODEC = "libx264rgb"
-RECORDING_CAPTURE_FPS = 30
-RECORDING_VIDEO_FPS = 30
-RECORDING_GIF_FPS = 12
-RECORDING_GIF_MAX_WIDTH = 960
 RECORDING_MAX_INTERMEDIATE_BYTES = 1024**3
 RECORDING_DIRECTORY_NAME = "recordings"
 RECORDING_DIR_MODE = 0o700
@@ -30,13 +24,6 @@ RECORDING_STARTUP_PROBE_SECONDS = 1.0
 RECORDING_STOP_TIMEOUT_SECONDS = 10.0
 RECORDING_TERM_TIMEOUT_SECONDS = 5.0
 RECORDING_KILL_TIMEOUT_SECONDS = 5.0
-RECORDING_H264_ENCODERS = ("libx264",)
-RECORDING_MP4_CRF = "23"
-RECORDING_MP4_PRESET = "medium"
-RECORDING_AUDIO_ENCODERS = {"mp4": "aac", "webm": "libopus"}
-RECORDING_AUDIO_CODEC_NAMES = {"mp4": "aac", "webm": "opus"}
-RECORDING_AUDIO_BITRATES = {"mp4": "128k", "webm": "96k"}
-RECORDING_AUDIO_SAMPLE_RATE = 48000
 
 
 @dataclass
@@ -67,6 +54,7 @@ class RecordingJob:
     events: list[dict[str, Any]] = field(default_factory=list)
     stream_sources: list[str] | None = None
     stream_report: list[dict[str, Any]] = field(default_factory=list)
+    media_duration_ms: float | None = None
     timeline_path: Path | None = None
     narration: dict[str, Any] | None = None
 
@@ -210,224 +198,7 @@ def new_recording_job(arguments: dict[str, Any]) -> RecordingJob:
     )
 
 
-RECORDING_ENCODER_PREFERENCE = ("libsvtav1", "libaom-av1")
 RECORDING_LOG_TAIL_BYTES = 500
-
-
-def recording_capture_argv(job: RecordingJob) -> list[str]:
-    argv = ["wf-recorder", "-o", job.output]
-    if job.region is not None:
-        argv.extend(
-            [
-                "-g",
-                f"{job.region['x']},{job.region['y']} {job.region['width']}x{job.region['height']}",
-            ]
-        )
-    argv.extend(
-        [
-            "-f",
-            str(job.intermediate),
-            "-c",
-            RECORDING_CAPTURE_CODEC,
-            "-r",
-            str(RECORDING_CAPTURE_FPS),
-            "-p",
-            "preset=ultrafast",
-            "-p",
-            "crf=0",
-            "-y",
-        ]
-    )
-    return argv
-
-
-def choose_video_encoder() -> str:
-    result = core.run_command(["ffmpeg", "-hide_banner", "-encoders"], timeout=10.0)
-    for name in RECORDING_ENCODER_PREFERENCE:
-        if re.search(rf"^\s*V\S*\s+{re.escape(name)}\s", result.text, re.MULTILINE):
-            return name
-    raise core.ToolError(
-        "no AV1 encoder available in ffmpeg (need one of: "
-        + ", ".join(RECORDING_ENCODER_PREFERENCE)
-        + ")"
-    )
-
-
-def choose_h264_encoder() -> str:
-    result = core.run_command(["ffmpeg", "-hide_banner", "-encoders"], timeout=10.0)
-    for name in RECORDING_H264_ENCODERS:
-        if re.search(rf"^\s*V\S*\s+{re.escape(name)}\s", result.text, re.MULTILINE):
-            return name
-    raise core.ToolError(
-        "no H.264 encoder available in ffmpeg (need one of: "
-        + ", ".join(RECORDING_H264_ENCODERS)
-        + ")"
-    )
-
-
-def av1_encoder_args(encoder: str) -> list[str]:
-    """Encoder tuning shared by recording finalization and narration burn-in."""
-    if encoder == "libsvtav1":
-        return ["-crf", "28", "-preset", "8"]
-    return ["-crf", "30", "-cpu-used", "6", "-row-mt", "1", "-tiles", "2x2"]
-
-
-def recording_webm_argv(job: RecordingJob) -> list[str]:
-    filters = [
-        f"fps={RECORDING_VIDEO_FPS}",
-        "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-        "format=yuv420p",
-    ]
-    argv = [
-        "ffmpeg",
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(job.intermediate),
-        "-an",
-        "-sn",
-        "-dn",
-        "-map_metadata",
-        "-1",
-        "-vf",
-        ",".join(filters),
-        "-c:v",
-        job.encoder,
-    ]
-    argv.extend(av1_encoder_args(job.encoder))
-    argv.extend(
-        [
-            "-force_key_frames",
-            "expr:gte(t,n_forced*2)",
-            "-f",
-            "webm",
-            str(job.artifact),
-        ]
-    )
-    return argv
-
-
-def recording_mp4_argv(job: RecordingJob) -> list[str]:
-    filters = [
-        f"fps={RECORDING_VIDEO_FPS}",
-        "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-        "format=yuv420p",
-    ]
-    argv = [
-        "ffmpeg",
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(job.intermediate),
-        "-an",
-        "-sn",
-        "-dn",
-        "-map_metadata",
-        "-1",
-        "-vf",
-        ",".join(filters),
-        "-c:v",
-        "libx264",
-        "-crf",
-        RECORDING_MP4_CRF,
-        "-preset",
-        RECORDING_MP4_PRESET,
-    ]
-    argv.extend(container_mux_flags("mp4"))
-    argv.extend(["-f", "mp4", str(job.artifact)])
-    return argv
-
-
-def recording_gif_argv(job: RecordingJob, capture_width: int) -> list[str]:
-    filters = [f"fps={RECORDING_GIF_FPS}"]
-    if capture_width > RECORDING_GIF_MAX_WIDTH:
-        filters.append(f"scale={RECORDING_GIF_MAX_WIDTH}:-1:flags=lanczos")
-    filters.append(
-        "split[a][b];[a]palettegen=stats_mode=diff[p];"
-        "[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
-    )
-    return [
-        "ffmpeg",
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(job.intermediate),
-        "-vf",
-        ",".join(filters),
-        "-loop",
-        "0",
-        "-an",
-        "-sn",
-        "-dn",
-        "-map_metadata",
-        "-1",
-        "-f",
-        "gif",
-        str(job.artifact),
-    ]
-
-
-def video_encode_args(fmt: str, encoder: str) -> list[str]:
-    if fmt == "mp4":
-        return ["-c:v", "libx264", "-crf", RECORDING_MP4_CRF, "-preset", RECORDING_MP4_PRESET]
-    return ["-c:v", encoder] + av1_encoder_args(encoder)
-
-
-def audio_encode_args(fmt: str) -> list[str]:
-    return [
-        "-c:a",
-        RECORDING_AUDIO_ENCODERS[fmt],
-        "-b:a",
-        RECORDING_AUDIO_BITRATES[fmt],
-        "-ac",
-        "2",
-        "-ar",
-        str(RECORDING_AUDIO_SAMPLE_RATE),
-    ]
-
-
-def container_mux_flags(fmt: str) -> list[str]:
-    return ["-movflags", "+faststart"] if fmt == "mp4" else []
-
-
-def narration_mux_argv(
-    job: RecordingJob, track: Path, out_path: Path, subtitle_filter: str | None = None
-) -> list[str]:
-    """Mux narration into the recording's container, optionally burning captions."""
-    argv = [
-        "ffmpeg",
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(job.artifact),
-        "-i",
-        str(track),
-    ]
-    if subtitle_filter:
-        argv.extend(["-filter_complex", subtitle_filter, "-map", "[v]"])
-    else:
-        argv.extend(["-map", "0:v:0"])
-    argv.extend(["-map", "1:a:0"])
-    if subtitle_filter:
-        argv.extend(video_encode_args(job.fmt, job.encoder))
-    else:
-        argv.extend(["-c:v", "copy"])
-    argv.extend(audio_encode_args(job.fmt))
-    argv.extend(container_mux_flags(job.fmt))
-    argv.extend(["-map_metadata", "-1", "-f", job.fmt, str(out_path)])
-    return argv
 
 
 def validate_recording_artifact(
@@ -455,7 +226,7 @@ def validate_recording_artifact(
             raise core.ToolError(
                 f"artifact must contain exactly one {expected_video.upper()} video stream"
             )
-        expected_audio = RECORDING_AUDIO_CODEC_NAMES[job.fmt]
+        expected_audio = encoding.RECORDING_AUDIO_CODEC_NAMES[job.fmt]
         if expect_audio:
             if len(audio) != 1 or audio[0].get("codec_name") != expected_audio:
                 raise core.ToolError(
@@ -464,7 +235,7 @@ def validate_recording_artifact(
         elif audio:
             raise core.ToolError("artifact must not contain audio streams")
     try:
-        duration = float((probe.get("format") or {}).get("duration") or 0.0)
+        duration = media.duration_seconds_from_probe(probe)
     except (TypeError, ValueError):
         duration = 0.0
     if duration <= 0.0:
@@ -475,22 +246,31 @@ def validate_recording_artifact(
         "mime_type": RECORDING_MIME_TYPES[job.fmt],
         "width": int(video[0].get("width") or 0),
         "height": int(video[0].get("height") or 0),
-        "duration_seconds": round(duration, 3),
+        "media_duration_seconds": round(duration, 3),
         "frame_rate": round(media.parse_frame_rate(video[0].get("avg_frame_rate")), 3),
     }
 
 
 def finalize_recording(job: RecordingJob) -> dict[str, Any]:
-    capture = media.probe_video_stream(job.intermediate)
+    try:
+        capture = media.probe_video_stream(job.intermediate)
+    except core.ToolError as exc:
+        hint = (
+            " (this take was stopped by its own deadline, which can leave the recorder's "
+            "tail unwritten)"
+            if job.auto_stopped
+            else ""
+        )
+        raise core.ToolError(f"capture produced an unreadable intermediate{hint}: {exc}") from exc
     try:
         capture_width = int(capture.get("width") or 0)
     except (TypeError, ValueError):
         capture_width = 0
     if job.fmt == "webm":
-        argv = recording_webm_argv(job)
+        argv = encoding.recording_webm_argv(job)
     elif job.fmt == "mp4":
-        argv = recording_mp4_argv(job)
+        argv = encoding.recording_mp4_argv(job)
     else:
-        argv = recording_gif_argv(job, capture_width)
+        argv = encoding.recording_gif_argv(job, capture_width)
     core.run_command(argv, timeout=600.0)
     return validate_recording_artifact(job)

@@ -35,16 +35,41 @@ def event_times_ms(job: recording.RecordingJob) -> dict[int, float]:
     }
 
 
+def media_extent(job: recording.RecordingJob) -> tuple[int, float | None]:
+    """How far the ingested timeline reaches, and how much of it has no picture.
+
+    Returns the number of events past the playable video extent and the latest
+    event time in milliseconds. Before finalization the extent is not known yet,
+    so nothing is counted as past it. The comparison is strict: this is a report,
+    not the gate that refuses an anchor (that one allows a small slack).
+    """
+    times = list(event_times_ms(job).values())
+    if not times:
+        return 0, None
+    latest = max(times)
+    if job.media_duration_ms is None:
+        return 0, latest
+    return sum(1 for t_ms in times if t_ms > job.media_duration_ms), latest
+
+
 def timeline_document(job: recording.RecordingJob) -> dict[str, Any]:
     end = job.ended_monotonic if job.ended_monotonic is not None else time.monotonic()
+    events_beyond_media, latest_event_ms = media_extent(job)
     return {
         "id": job.id,
         "format": job.fmt,
         "output": job.output,
         "region": job.region,
         "started_utc": job.started_utc,
-        "capture_seconds": round(max(end - job.started_monotonic, 0.0), 3),
+        "capture_elapsed_seconds": round(max(end - job.started_monotonic, 0.0), 3),
+        "media_duration_seconds": (
+            round(job.media_duration_ms / 1000.0, 3)
+            if job.media_duration_ms is not None
+            else None
+        ),
         "event_count": len(job.events),
+        "latest_event_ms": latest_event_ms,
+        "events_beyond_media": events_beyond_media,
         "sources": [dict(report) for report in job.stream_report],
         "events": [
             {

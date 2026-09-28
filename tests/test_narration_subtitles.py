@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, narration, outputs, recording, server, subtitles, tts
+from seshat import core, encoding, narration, outputs, recording, server, subtitles, tts
 
 from support import completed_job, event
 
@@ -61,7 +61,7 @@ class MuxArgvTests(unittest.TestCase):
         from types import SimpleNamespace
 
         job = SimpleNamespace(artifact=Path("/tmp/a.webm"), fmt="webm", encoder="libsvtav1")
-        argv = recording.narration_mux_argv(
+        argv = encoding.narration_mux_argv(
             job, Path("/tmp/n.wav"), Path("/tmp/out.webm"), self.FILTER
         )
         joined = " ".join(argv)
@@ -75,7 +75,7 @@ class MuxArgvTests(unittest.TestCase):
         from types import SimpleNamespace
 
         job = SimpleNamespace(artifact=Path("/tmp/a.mp4"), fmt="mp4", encoder="libx264")
-        argv = recording.narration_mux_argv(
+        argv = encoding.narration_mux_argv(
             job, Path("/tmp/n.wav"), Path("/tmp/out.mp4"), self.FILTER
         )
         self.assertEqual(argv[argv.index("-c:v") + 1], "libx264")
@@ -87,7 +87,7 @@ class MuxArgvTests(unittest.TestCase):
         from types import SimpleNamespace
 
         job = SimpleNamespace(artifact=Path("/tmp/a.webm"), fmt="webm", encoder="libsvtav1")
-        argv = recording.narration_mux_argv(job, Path("/tmp/n.wav"), Path("/tmp/out.webm"))
+        argv = encoding.narration_mux_argv(job, Path("/tmp/n.wav"), Path("/tmp/out.webm"))
         self.assertEqual(argv[argv.index("-c:v") + 1], "copy")
         self.assertNotIn("subtitles=filename=", " ".join(argv))
 

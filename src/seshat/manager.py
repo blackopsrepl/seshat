@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any
 
-from . import core, narration, recording, scenes, streams, timeline, tts
+from . import core, encoding, narration, recording, scenes, streams, timeline, tts
 
 
 class RecordingManager:
@@ -124,12 +124,12 @@ class RecordingManager:
                 )
             new_job = recording.new_recording_job(arguments)
             if new_job.fmt == "webm":
-                new_job.encoder = recording.choose_video_encoder()
+                new_job.encoder = encoding.choose_video_encoder()
             elif new_job.fmt == "mp4":
-                new_job.encoder = recording.choose_h264_encoder()
+                new_job.encoder = encoding.choose_h264_encoder()
             try:
                 new_job.process = subprocess.Popen(
-                    recording.recording_capture_argv(new_job),
+                    encoding.recording_capture_argv(new_job),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=new_job.log_fd,
@@ -346,9 +346,13 @@ class RecordingManager:
             with self._lock:
                 self._fail(job, "unexpected finalization failure; see server log")
             return
-        capture_seconds = max(
+        capture_elapsed = max(
             (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 0.0
         )
+        job.media_duration_ms = round(
+            float(summary.get("media_duration_seconds") or 0.0) * 1000.0, 3
+        )
+        events_beyond_media, latest_event_ms = timeline.media_extent(job)
         try:
             artifact_bytes = job.artifact.stat().st_size
         except OSError:
@@ -361,7 +365,9 @@ class RecordingManager:
             "region": job.region,
             "path": str(job.artifact),
             "bytes": artifact_bytes,
-            "capture_seconds": round(capture_seconds, 3),
+            "capture_elapsed_seconds": round(capture_elapsed, 3),
+            "latest_event_ms": latest_event_ms,
+            "events_beyond_media": events_beyond_media,
             "graceful": not job.forced,
             "audio_included": False,
             "cursor_included": True,
@@ -398,11 +404,17 @@ class RecordingManager:
                     job.result["narration"] = {"error": "unexpected narration failure"}
             return
         with self._lock:
+            job.media_duration_ms = round(
+                float(summary.get("media_duration_seconds") or 0.0) * 1000.0, 3
+            )
+            events_beyond_media, latest_event_ms = timeline.media_extent(job)
             job.narration = narration_meta
             job.phase = "completed"
             job.detail = None
             if job.result is not None:
                 job.result.update(summary)
+                job.result["events_beyond_media"] = events_beyond_media
+                job.result["latest_event_ms"] = latest_event_ms
                 try:
                     job.result["bytes"] = job.artifact.stat().st_size
                 except OSError:
@@ -433,7 +445,7 @@ class RecordingManager:
             return {
                 **base,
                 "phase": "stopping",
-                "capture_seconds": round(
+                "capture_elapsed_seconds": round(
                     (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 3
                 ),
             }
@@ -441,7 +453,7 @@ class RecordingManager:
             return {
                 **base,
                 "phase": "processing",
-                "capture_seconds": round(
+                "capture_elapsed_seconds": round(
                     (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 3
                 ),
                 "note": "finalizing artifact; poll recording_status until completed or failed",
@@ -450,7 +462,7 @@ class RecordingManager:
             return {
                 **base,
                 "phase": "narrating",
-                "capture_seconds": round(
+                "capture_elapsed_seconds": round(
                     (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 3
                 ),
                 "note": "synthesizing and muxing narration; poll recording_status",

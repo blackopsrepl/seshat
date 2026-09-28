@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import *
+from .encoding import *
 from .manager import *
 from .media import *
 from .narration import *

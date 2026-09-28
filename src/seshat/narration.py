@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import core, media, recording, subtitles, timeline, tts
+from . import core, encoding, media, recording, subtitles, timeline, tts
 
 
 @dataclass
@@ -56,26 +56,23 @@ def recording_capture_ms(job: recording.RecordingJob) -> float:
 
 
 def recording_duration_ms(job: recording.RecordingJob) -> float:
-    """Measured duration of the published artifact, in milliseconds.
+    """Playable extent of the published artifact, in milliseconds.
 
     Post-processing is owned by the artifact on disk: anchor validation and
     scheduling must agree with the bytes the caller can actually see at
     ``job.artifact``. Capture wall-clock time and the discarded intermediate
     are never consulted, so a trimmed or replaced artifact is honored and an
     unreadable one fails clearly instead of silently using a stale duration.
+
+    The video stream's own extent is preferred over the container's, because an
+    anchor placed in the gap between the last frame and the end of the container
+    has no picture to point at.
     """
-    probe = media.probe_media(job.artifact)
-    try:
-        duration = float((probe.get("format") or {}).get("duration") or 0.0)
-    except (TypeError, ValueError):
-        duration = 0.0
-    if duration <= 0.0:
-        raise core.ToolError(f"artifact has no readable duration: {job.artifact.name}")
-    return round(duration * 1000.0, 3)
+    return media.probe_duration_ms(job.artifact)
 
 
 def parse_narration_segment(
-    raw: Any, index: int, event_ids: set[int], capture_ms: float
+    raw: Any, index: int, event_times: dict[int, float], media_ms: float
 ) -> NarrationSegment:
     if not isinstance(raw, dict):
         raise core.ToolError(f"segments[{index}] must be an object")
@@ -107,17 +104,24 @@ def parse_narration_segment(
         )
     if has_event:
         event_id = core.strict_int(anchor["event_id"], f"segments[{index}].anchor.event_id")
-        if event_id not in event_ids:
+        if event_id not in event_times:
             raise core.ToolError(
                 f"segments[{index}].anchor.event_id {event_id} is not in the take timeline "
-                f"({len(event_ids)} event(s) ingested; an event id only exists when the tool "
+                f"({len(event_times)} event(s) ingested; an event id only exists when the tool "
                 "server that performed the action publishes a timeline stream)"
+            )
+        event_ms = event_times[event_id]
+        if event_ms > media_ms + tts.NARRATION_ANCHOR_SLACK_MS:
+            raise core.ToolError(
+                f"segments[{index}].anchor.event_id {event_id} resolves to {event_ms:g} ms, past "
+                f"the end of the playable video ({media_ms:g} ms): the picture it anchors to is "
+                "not in the artifact (a take stopped by its own deadline can lose its tail)"
             )
         return NarrationSegment(index, event_id, None, text)
     at_ms = core.strict_number(
         anchor["at_ms"], f"segments[{index}].anchor.at_ms", minimum=0.0
     )
-    if at_ms > capture_ms + tts.NARRATION_ANCHOR_SLACK_MS:
+    if at_ms > media_ms + tts.NARRATION_ANCHOR_SLACK_MS:
         raise core.ToolError(
             f"segments[{index}].anchor.at_ms {at_ms:g} is beyond the recording duration"
         )
@@ -163,9 +167,9 @@ def parse_narration_arguments(
         raise core.ToolError("subtitles must be a boolean")
     if duration_ms is None:
         duration_ms = recording_duration_ms(job)
-    event_ids = set(timeline.event_times_ms(job))
+    event_times = timeline.event_times_ms(job)
     segments = [
-        parse_narration_segment(raw, index + 1, event_ids, duration_ms)
+        parse_narration_segment(raw, index + 1, event_times, duration_ms)
         for index, raw in enumerate(raw_segments)
     ]
     if sum(len(segment.text) for segment in segments) > core.TEXT_LIMIT:
@@ -346,7 +350,7 @@ def perform_narration(
             subtitle_path = subtitles.write_subtitle_file(workdir, document)
             subtitle_filter = subtitles.video_filter(subtitle_path)
         core.run_command(
-            recording.narration_mux_argv(job, track_path, temp_path, subtitle_filter),
+            encoding.narration_mux_argv(job, track_path, temp_path, subtitle_filter),
             timeout=tts.NARRATION_BUILD_TIMEOUT_SECONDS,
         )
         try:

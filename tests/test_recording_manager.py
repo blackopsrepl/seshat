@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, media, narration, outputs, recording, server, tts
+from seshat import core, encoding, media, narration, outputs, recording, server, tts
 
 from support import *
 class ManagerLifecycleTests(unittest.TestCase):
@@ -27,10 +27,10 @@ class ManagerLifecycleTests(unittest.TestCase):
         output_patch = patch.object(outputs, "get_outputs", return_value=single_output())
         output_patch.start()
         self.addCleanup(output_patch.stop)
-        encoder = patch.object(recording, "choose_video_encoder", return_value="libsvtav1")
+        encoder = patch.object(encoding, "choose_video_encoder", return_value="libsvtav1")
         encoder.start()
         self.addCleanup(encoder.stop)
-        h264 = patch.object(recording, "choose_h264_encoder", return_value="libx264")
+        h264 = patch.object(encoding, "choose_h264_encoder", return_value="libx264")
         h264.start()
         self.addCleanup(h264.stop)
         real_sleep = time.sleep
@@ -267,6 +267,31 @@ class ManagerLifecycleTests(unittest.TestCase):
                 gate.set()
                 job.thread.join(timeout=5)
                 self.assertEqual(job.phase, "completed")
+
+    def test_completed_result_separates_capture_time_from_playable_media(self) -> None:
+        """Shutdown wait time is not playable capture and must not be reported as it."""
+        process = self.start_ok()
+        job = self.manager._job
+        job.intermediate.write_bytes(b"capture-bytes")
+        job.started_monotonic = time.monotonic() - 225.213
+        summary = {
+            "codec": "h264",
+            "container": "mp4",
+            "mime_type": "video/mp4",
+            "width": 1920,
+            "height": 1080,
+            "media_duration_seconds": 204.233,
+            "frame_rate": 30.0,
+        }
+        with exit_process_on_signal(process):
+            with patch.object(recording, "finalize_recording", return_value=summary):
+                self.manager.stop()
+        job.thread.join(timeout=5)
+        final = self.manager.status()
+        self.assertAlmostEqual(final["capture_elapsed_seconds"], 225.213, delta=0.05)
+        self.assertEqual(final["media_duration_seconds"], 204.233)
+        self.assertEqual(final["events_beyond_media"], 0)
+        self.assertIsNone(final["latest_event_ms"])
 
     def test_status_idle_without_job(self) -> None:
         self.assertEqual(self.manager.status(), {"phase": "idle"})

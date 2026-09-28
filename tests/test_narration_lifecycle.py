@@ -68,7 +68,7 @@ class VoiceoverLifecycleTests(unittest.TestCase):
             "mime_type": "video/webm",
             "width": 640,
             "height": 360,
-            "duration_seconds": 9.75,
+            "media_duration_seconds": 9.75,
             "frame_rate": 30.0,
         }
         with patch.object(tts, "resolve_tts_engine", return_value=server.EdgeTtsEngine()):
@@ -85,7 +85,7 @@ class VoiceoverLifecycleTests(unittest.TestCase):
         self.assertTrue(final["audio_included"])
         self.assertEqual(final["narration"]["engine"], "edge")
         self.assertEqual(final["bytes"], len(b"narrated"))
-        self.assertEqual(final["duration_seconds"], 9.75)
+        self.assertEqual(final["media_duration_seconds"], 9.75)
 
     def test_narration_failure_reverts_to_completed_with_error(self) -> None:
         job = completed_job(self.tmp.name, events=[event(500.0)])
