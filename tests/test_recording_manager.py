@@ -6,8 +6,10 @@ import signal
 import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -235,15 +237,36 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(final["phase"], "completed")
         self.assertTrue(final["auto_stopped"])
 
+    def gated_finalize(self) -> tuple[threading.Event, Any]:
+        """A finalization that blocks until the test releases it.
+
+        Finalization runs on a worker thread, so asserting that a take is still
+        processing requires holding that thread still. Without the gate the
+        assertion races the worker and fails whenever the worker wins, which is
+        most often under load.
+        """
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+
+        def finalize(_job: recording.RecordingJob) -> dict:
+            gate.wait(timeout=5.0)
+            return {"codec": "av1"}
+
+        return gate, finalize
+
     def test_shutdown_stops_active_capture(self) -> None:
         process = self.start_ok()
         job = self.manager._job
         job.intermediate.write_bytes(b"capture-bytes")
+        gate, finalize = self.gated_finalize()
         with exit_process_on_signal(process):
-            with patch.object(recording, "finalize_recording", side_effect=lambda j: {"codec": "av1"}):
+            with patch.object(recording, "finalize_recording", side_effect=finalize):
                 self.manager.shutdown()
-        self.assertIn(server.signal.SIGINT, process.signals)
-        self.assertEqual(job.phase, "processing")
+                self.assertIn(server.signal.SIGINT, process.signals)
+                self.assertEqual(job.phase, "processing")
+                gate.set()
+                job.thread.join(timeout=5)
+                self.assertEqual(job.phase, "completed")
 
     def test_status_idle_without_job(self) -> None:
         self.assertEqual(self.manager.status(), {"phase": "idle"})
@@ -256,6 +279,7 @@ class ManagerLifecycleTests(unittest.TestCase):
         process = self.start_ok()
         job = self.manager._job
         job.intermediate.write_bytes(b"capture-bytes")
+        gate, finalize = self.gated_finalize()
         previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
 
         def restore_handlers() -> None:
@@ -266,9 +290,13 @@ class ManagerLifecycleTests(unittest.TestCase):
         with patch.object(server.sys, "stdin", io.StringIO("")):
             with patch.object(server, "RECORDINGS", self.manager):
                 with exit_process_on_signal(process):
-                    server.run_mcp_server()
-        self.assertEqual(job.phase, "processing")
-        self.assertEqual(process.signals[0], signal.SIGINT)
+                    with patch.object(recording, "finalize_recording", side_effect=finalize):
+                        server.run_mcp_server()
+                        self.assertEqual(process.signals[0], signal.SIGINT)
+                        self.assertEqual(job.phase, "processing")
+                        gate.set()
+                        job.thread.join(timeout=5)
+                        self.assertEqual(job.phase, "completed")
 
 
 class RecordingIdTests(unittest.TestCase):
