@@ -16,7 +16,26 @@ const serverVersion = {
   },
 };
 
+// Tooling-only releases are real releases. `build` is a hidden type in the
+// conventional-commits preset, so a release that ships no behaviour would
+// otherwise publish an empty changelog section; everything else keeps the
+// preset's default visibility.
+const types = [
+  { type: "feat", section: "Features" },
+  { type: "fix", section: "Bug Fixes" },
+  { type: "perf", section: "Performance Improvements" },
+  { type: "revert", section: "Reverts" },
+  { type: "build", section: "Build System" },
+  { type: "docs", section: "Documentation", hidden: true },
+  { type: "style", section: "Styles", hidden: true },
+  { type: "chore", section: "Miscellaneous Chores", hidden: true },
+  { type: "refactor", section: "Code Refactoring", hidden: true },
+  { type: "test", section: "Tests", hidden: true },
+  { type: "ci", section: "Continuous Integration", hidden: true },
+];
+
 module.exports = {
+  types,
   packageFiles: [pyproject],
   bumpFiles: [pyproject, serverVersion],
   tagPrefix: "v",
