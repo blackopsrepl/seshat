@@ -79,7 +79,9 @@ is not in the take timeline **and** an anchor — either kind — that resolves 
 the playable video extent, unknown keys, and non-boolean `subtitles`. Runs
 asynchronously as `phase: "narrating"`. A narration failure returns the take to
 `completed` with the artifact intact and the reason in
-`result.narration.error`.
+`result.narration.error`. Caption burn-in additionally requires an ffmpeg built
+with libass (the `subtitles` filter); a build without one fails narration
+exactly this way, and the take can be re-narrated with `subtitles=false`.
 
 ### recording_scenes
 
@@ -97,7 +99,9 @@ source.
 - Runtime root `$XDG_RUNTIME_DIR/seshat` (0700): `streams/` for ingestion,
   `recordings/` for takes. Artifacts are 0600 and do not survive logout.
 - One take per process. `RECORDINGS` is the single owner; the server stops an
-  active capture on stdin EOF.
+  active capture on stdin EOF. Takes live in the server's memory: once the
+  process exits they are forgotten, so narration must run in the same server
+  session that recorded the take.
 - Two clocks, reported separately and never conflated: `capture_elapsed_seconds`
   is wall time during which capture ran (shutdown escalation included),
   `media_duration_seconds` is the playable picture measured by ffprobe. Anchors
