@@ -33,14 +33,20 @@ Requires `wf-recorder`, `ffmpeg`, `ffprobe`.
 `recording_status` accepts an optional `id` (default: the latest take) and reports
 one of `idle`, `recording`, `stopping`, `processing`, `narrating`, `completed`,
 `failed`. `completed` carries the artifact summary; `failed` carries `detail`
-plus any surviving `intermediate_path` / `log_path`. `recording_stop` takes no
-arguments and errors when no take is recording.
+plus every path that survived the failure — `intermediate_path`,
+`candidate_path` (a finalized artifact that did not validate), `log_path`.
+`recording_stop` takes no
+arguments, closes the event/capture window immediately, returns `stopping`, and
+does not hold the manager lock while the recorder exits.
 
-A completed summary separates the two durations on purpose:
+A completed summary separates lifecycle and media facts:
 
 | field | meaning |
 |---|---|
-| `capture_elapsed_seconds` | how long capture ran, including recorder shutdown escalation |
+| `capture_elapsed_seconds` | recorder launch to stop request; excludes shutdown |
+| `shutdown_latency_seconds` | stop request to observed process exit |
+| `termination_stage` | `natural`, `sigint`, or `sigterm`; `sigkill` fails the take |
+| `recorder_returncode` | exact recorder process return code |
 | `media_duration_seconds` | playable extent of the video stream (container as fallback) |
 | `latest_event_ms` | furthest ingested event, recording-relative; `null` when there are none |
 | `events_beyond_media` | ingested events past the playable extent, i.e. unusable as anchors |
@@ -102,10 +108,16 @@ source.
   active capture on stdin EOF. Takes live in the server's memory: once the
   process exits they are forgotten, so narration must run in the same server
   session that recorded the take.
-- Two clocks, reported separately and never conflated: `capture_elapsed_seconds`
-  is wall time during which capture ran (shutdown escalation included),
-  `media_duration_seconds` is the playable picture measured by ffprobe. Anchors
-  are validated against the latter.
+- Three lifecycle/media facts stay separate: `capture_elapsed_seconds` spans
+  recorder launch through the stop request, `shutdown_latency_seconds` spans the
+  stop request through process exit, and `media_duration_seconds` is the playable
+  picture measured by ffprobe. Anchors are validated against the latter.
+- Capture requests frames continuously (`wf-recorder -D`) so a static tail still
+  advances to the stop boundary. A stop that reaches `SIGKILL`, or any non-zero
+  recorder return code, fails instead of publishing a possibly truncated take.
+- Finalization writes a `.part` candidate, validates stream/container shape,
+  decodes the complete video stream with ffmpeg, then atomically replaces the
+  public artifact.
 - Silent artifact contract: exactly one video stream, no audio —
   MP4 = H.264 (`libx264`, CRF 23), WebM = AV1 (`libsvtav1` preferred, then
   `libaom-av1`), GIF = 12 fps, max 960 px wide, works only with no stream.
@@ -117,9 +129,10 @@ source.
   with a specific message. `server.py` logs unexpected exceptions to stderr and
   returns a generic `internal tool error`.
 - `--doctor` and `--self-test` print JSON diagnostics; neither records.
-- `make integration` records the live screen for a real deadline and checks that
-  the artifact is playable and that the ingested timeline is accounted for. It
-  refuses to run without `SESHAT_INTEGRATION=1` and is never part of `make check`.
+- `make integration` records the live screen for a real deadline and asserts that
+  the take auto-stopped, that the recorder exited cleanly, that the playable
+  picture reaches the stop boundary, and that no ingested event resolves past it.
+  It refuses to run without `SESHAT_INTEGRATION=1` and is never part of `make check`.
 
 ## Environment
 

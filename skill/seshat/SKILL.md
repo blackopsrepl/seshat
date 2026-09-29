@@ -88,12 +88,19 @@ shows; use the event only for its timing.
   once more events land. Always read the timeline after the take completes.
 - **`... past the end of the playable video`.** The event is real but the picture
   it points at is not in the artifact. Compare `latest_event_ms` with
-  `media_duration_seconds`; a deadline-stopped take can lose its tail. Anchor
-  earlier or drop the segment.
+  `media_duration_seconds`. Anchor earlier or drop the segment.
 - **`capture_elapsed_seconds` and `media_duration_seconds` disagree.** They are
-  supposed to: the first includes recorder shutdown, the second is playable. Do
-  not treat the difference as corruption; do treat `events_beyond_media > 0` as
-  anchors you must not use.
+  supposed to: capture is wall time from recorder launch to the stop request,
+  media is the playable picture. Do not treat a small gap as corruption; treat
+  `events_beyond_media > 0` as event ids you must not anchor to. A large gap means
+  the recorder's own timeline is not the take's, and the take is not trustworthy
+  for narration.
+- **`wf-recorder required SIGKILL; capture may be truncated`.** The recorder
+  ignored both graceful signals, so the take failed instead of publishing a
+  possibly malformed artifact. The intermediate is kept for inspection; re-record.
+- **`wf-recorder exited during shutdown (code N)`.** The recorder died while
+  stopping, so its tail is not trustworthy. Read the returned log tail before
+  re-recording.
 - **`capture produced an unreadable intermediate`.** The recorder left a
   truncated file, most often on a deadline stop. The intermediate and the capture
   log are kept and their paths are in the failure detail; the take is not
@@ -120,6 +127,10 @@ leaves behind:
 SESHAT_INTEGRATION=1 make integration
 ```
 
-It records the live screen for a few seconds, publishes an event near the
-deadline, and prints capture elapsed, playable duration, and how far the timeline
-reaches. Run it after touching capture, finalization, or ingestion.
+It records the live screen for a few seconds, publishes an event inside the take's
+own window, and asserts that the deadline stopped the take, that the recorder
+exited cleanly, that the playable picture reached the stop boundary, and that no
+ingested event resolves past it. `SESHAT_INTEGRATION_SECONDS` sets the deadline
+and `SESHAT_INTEGRATION_TOLERANCE_SECONDS` (default 2.5) the gap allowed for the
+recorder attaching to the compositor after launch. Run it after touching capture,
+lifecycle, finalization, or ingestion.

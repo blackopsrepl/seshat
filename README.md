@@ -107,12 +107,13 @@ One take may be active at a time. Artifacts are written to
 `$XDG_RUNTIME_DIR/seshat/recordings` (0700, files 0600) and do not survive a
 logout; copy anything you want to keep.
 
-A completed take reports two durations, and they are deliberately different:
-`capture_elapsed_seconds` is how long capture ran (including the recorder's
-shutdown, which can take seconds), and `media_duration_seconds` is the playable
-picture. `latest_event_ms` and `events_beyond_media` say how far the ingested
-timeline reaches and how much of it has no picture to point at. A take stopped by
-its own deadline can lose its tail, so the two are not expected to match.
+A completed take separates three lifecycle facts: `capture_elapsed_seconds` runs
+from recorder launch to the stop request, `shutdown_latency_seconds` measures how
+long the recorder then took to exit, and `media_duration_seconds` is the playable
+picture. `termination_stage` and `recorder_returncode` expose how the process
+ended. Capture is damage-independent, so static screen intervals still advance
+the video; `latest_event_ms` and `events_beyond_media` identify any remaining
+timeline/media mismatch rather than hiding it.
 
 ```bash
 make check                         # unit tests, compilation, file-length ceiling

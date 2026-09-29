@@ -30,10 +30,20 @@ Guidance for coding agents working in this repository.
 - **Every anchor is validated against the playable video extent**, taken from the
   video stream with the container as fallback. An event that exists is not
   thereby an anchor: one that resolves past the last frame is refused.
-- **Capture elapsed time and playable media duration are separate facts** and must
-  stay separate. `capture_elapsed_seconds` includes recorder shutdown escalation
-  and is not playable capture; `media_duration_seconds` is what ffprobe measures.
-  `events_beyond_media` counts ingested events with no picture to point at.
+- **The capture window, the recorder's shutdown and the playable picture are
+  separate facts** and must stay separate. `capture_elapsed_seconds` runs from
+  recorder launch to the stop request — encoder discovery and signal escalation
+  are neither — and ingestion closes on the same instant;
+  `shutdown_latency_seconds` is the stop request to process exit, reported with
+  `termination_stage` and the exact `recorder_returncode`;
+  `media_duration_seconds` is what ffprobe measures. `events_beyond_media` counts
+  ingested events with no picture to point at.
+- Capture is damage-independent (`wf-recorder -D`), so a static screen still
+  advances the picture to the stop boundary. A stop that escalates to `SIGKILL`,
+  or any non-zero recorder exit, fails the take instead of reaching finalization.
+- A finalized artifact is published atomically: it is built at a `.part`
+  candidate, checked for stream/container shape, fully decoded, and only then
+  moved into place, so a corrupt result never replaces a good one.
 - Event ids are positions in the take's ingested, time-ordered event list. They
   are provisional while a take records and final once it stops. Narration is
   only accepted on a completed take, so anchors are always final.
@@ -61,6 +71,9 @@ Guidance for coding agents working in this repository.
 - `subtitles.py`: styled ASS captions and the burn-in mux argv.
 - `scenes.py`: approximate scene-cut and OCR fallback anchors.
 - `manager.py`: the single take lifecycle owner and `RECORDINGS`.
+- `lifecycle.py`: recorder process-group termination, its typed outcome, and the
+  capture/shutdown clocks.
+- `reporting.py`: the per-phase take summary every tool returns.
 - `tools.py` / `specs.py`: MCP tool wrappers and JSON schemas.
 - `server.py`: MCP protocol loop and CLI facade.
 - `scripts/check_file_length.py`: the file-length gate; `scripts/integration_deadline.py`:
