@@ -7,6 +7,34 @@ from typing import Any
 from . import core
 
 
+FULL_DECODE_TIMEOUT_SECONDS = 600.0
+
+
+def validate_full_video_decode(path: Path) -> None:
+    """Decode the complete video stream and reject any frame or trailer error."""
+    core.run_command(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-xerror",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-sn",
+            "-dn",
+            "-f",
+            "null",
+            "-",
+        ],
+        timeout=FULL_DECODE_TIMEOUT_SECONDS,
+    )
+
+
 def probe_media(path: Path) -> dict[str, Any]:
     result = core.run_command(
         ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)],

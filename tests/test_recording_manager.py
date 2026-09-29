@@ -3,71 +3,19 @@ from __future__ import annotations
 import io
 import os
 import signal
-import stat
 import sys
 import tempfile
-import threading
-import time
 import unittest
-from typing import Any
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, encoding, media, narration, outputs, recording, server, tts
+from seshat import core, narration, recording, server, tts
 
 from support import *
-class ManagerLifecycleTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        env = patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp.name})
-        env.start()
-        self.addCleanup(env.stop)
-        output_patch = patch.object(outputs, "get_outputs", return_value=single_output())
-        output_patch.start()
-        self.addCleanup(output_patch.stop)
-        encoder = patch.object(encoding, "choose_video_encoder", return_value="libsvtav1")
-        encoder.start()
-        self.addCleanup(encoder.stop)
-        h264 = patch.object(encoding, "choose_h264_encoder", return_value="libx264")
-        h264.start()
-        self.addCleanup(h264.stop)
-        real_sleep = time.sleep
-        sleep = patch.object(server.time, "sleep", lambda _s: real_sleep(0.005))
-        sleep.start()
-        self.addCleanup(sleep.stop)
-        self.manager = server.RecordingManager()
 
-    def popen(self, process: FakeProcess):
-        def factory(argv, **kwargs):
-            process.argv = argv
-            process.popen_kwargs = kwargs
-            return process
 
-        return patch.object(server.subprocess, "Popen", side_effect=factory)
-
-    def start_ok(self, arguments: dict | None = None, process: FakeProcess | None = None) -> FakeProcess:
-        process = process or FakeProcess()
-        with self.popen(process):
-            summary = self.manager.start(arguments or {"max_duration_seconds": 30})
-        self.assertEqual(summary["phase"], "recording")
-        return process
-
-    def recordings_dir(self):
-        return server.Path(os.environ["XDG_RUNTIME_DIR"]) / "seshat" / "recordings"
-
-    def wait_terminal(self, timeout: float = 5.0) -> dict:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            summary = self.manager.status()
-            if summary["phase"] in {"completed", "failed"}:
-                return summary
-            thread = self.manager._job.thread if self.manager._job else None
-            if thread is not None:
-                thread.join(timeout=0.05)
-        return self.manager.status()
-
+class ManagerLifecycleTests(RecordingManagerCase):
     def test_start_launches_silent_capture_in_own_session(self) -> None:
         process = self.start_ok()
         self.assertEqual(process.argv[0], "wf-recorder")
@@ -135,10 +83,8 @@ class ManagerLifecycleTests(unittest.TestCase):
         with exit_process_on_signal(process):
             with patch.object(recording, "finalize_recording", side_effect=fake_finalize):
                 summary = self.manager.stop()
-        self.assertEqual(summary["phase"], "processing")
-        self.assertIsNotNone(job.thread)
-        job.thread.join(timeout=5)
-        final = self.manager.status()
+                final = self.wait_terminal()
+        self.assertEqual(summary["phase"], "stopping")
         self.assertEqual(final["phase"], "completed")
         self.assertEqual(final["path"], str(job.artifact))
         self.assertEqual(final["bytes"], len(b"artifact-bytes"))
@@ -147,35 +93,6 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.assertFalse(job.intermediate.exists())
         self.assertFalse(job.log_path.exists())
         self.assertTrue(job.artifact.exists())
-
-    def test_stop_escalation_reports_not_graceful(self) -> None:
-        process = self.start_ok()
-        job = self.manager._job
-        job.intermediate.write_bytes(b"capture-bytes")
-        stops = [
-            patch.object(recording, "RECORDING_STOP_TIMEOUT_SECONDS", 0.02),
-            patch.object(recording, "RECORDING_TERM_TIMEOUT_SECONDS", 0.02),
-            patch.object(recording, "RECORDING_KILL_TIMEOUT_SECONDS", 0.02),
-            patch.object(recording, "finalize_recording", side_effect=lambda j: {"codec": "av1"}),
-        ]
-        for stopper in stops:
-            stopper.start()
-            self.addCleanup(stopper.stop)
-        sent: list[int] = []
-
-        def record(_process, sig: int) -> None:
-            sent.append(sig)
-
-        with patch.object(
-            server.RecordingManager, "_signal_group", autospec=True, side_effect=record
-        ):
-            summary = self.manager.stop()
-        self.assertEqual(summary["phase"], "processing")
-        job.thread.join(timeout=5)
-        final = self.manager.status()
-        self.assertEqual(final["phase"], "completed")
-        self.assertFalse(final["graceful"])
-        self.assertEqual(sent, [signal.SIGINT, signal.SIGTERM, signal.SIGKILL])
 
     def test_status_reaps_independently_exited_recorder(self) -> None:
         process = self.start_ok()
@@ -207,8 +124,7 @@ class ManagerLifecycleTests(unittest.TestCase):
             with patch.object(recording, "finalize_recording", side_effect=server.ToolError("artifact is not WebM")
             ):
                 self.manager.stop()
-        job.thread.join(timeout=5)
-        summary = self.manager.status()
+                summary = self.wait_terminal()
         self.assertEqual(summary["phase"], "failed")
         self.assertIn("artifact is not WebM", summary["detail"])
         self.assertTrue(job.intermediate.exists())
@@ -237,23 +153,6 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(final["phase"], "completed")
         self.assertTrue(final["auto_stopped"])
 
-    def gated_finalize(self) -> tuple[threading.Event, Any]:
-        """A finalization that blocks until the test releases it.
-
-        Finalization runs on a worker thread, so asserting that a take is still
-        processing requires holding that thread still. Without the gate the
-        assertion races the worker and fails whenever the worker wins, which is
-        most often under load.
-        """
-        gate = threading.Event()
-        self.addCleanup(gate.set)
-
-        def finalize(_job: recording.RecordingJob) -> dict:
-            gate.wait(timeout=5.0)
-            return {"codec": "av1"}
-
-        return gate, finalize
-
     def test_shutdown_stops_active_capture(self) -> None:
         process = self.start_ok()
         job = self.manager._job
@@ -267,31 +166,6 @@ class ManagerLifecycleTests(unittest.TestCase):
                 gate.set()
                 job.thread.join(timeout=5)
                 self.assertEqual(job.phase, "completed")
-
-    def test_completed_result_separates_capture_time_from_playable_media(self) -> None:
-        """Shutdown wait time is not playable capture and must not be reported as it."""
-        process = self.start_ok()
-        job = self.manager._job
-        job.intermediate.write_bytes(b"capture-bytes")
-        job.started_monotonic = time.monotonic() - 225.213
-        summary = {
-            "codec": "h264",
-            "container": "mp4",
-            "mime_type": "video/mp4",
-            "width": 1920,
-            "height": 1080,
-            "media_duration_seconds": 204.233,
-            "frame_rate": 30.0,
-        }
-        with exit_process_on_signal(process):
-            with patch.object(recording, "finalize_recording", return_value=summary):
-                self.manager.stop()
-        job.thread.join(timeout=5)
-        final = self.manager.status()
-        self.assertAlmostEqual(final["capture_elapsed_seconds"], 225.213, delta=0.05)
-        self.assertEqual(final["media_duration_seconds"], 204.233)
-        self.assertEqual(final["events_beyond_media"], 0)
-        self.assertIsNone(final["latest_event_ms"])
 
     def test_status_idle_without_job(self) -> None:
         self.assertEqual(self.manager.status(), {"phase": "idle"})

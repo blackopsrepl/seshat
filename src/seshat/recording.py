@@ -4,7 +4,6 @@ import os
 import secrets
 import subprocess
 import threading
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -21,9 +20,6 @@ RECORDING_DIRECTORY_NAME = "recordings"
 RECORDING_DIR_MODE = 0o700
 RECORDING_FILE_MODE = 0o600
 RECORDING_STARTUP_PROBE_SECONDS = 1.0
-RECORDING_STOP_TIMEOUT_SECONDS = 10.0
-RECORDING_TERM_TIMEOUT_SECONDS = 5.0
-RECORDING_KILL_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -48,7 +44,10 @@ class RecordingJob:
     phase: str = "recording"
     detail: str | None = None
     auto_stopped: bool = False
-    forced: bool = False
+    stop_requested_monotonic: float | None = None
+    process_exited_monotonic: float | None = None
+    termination_stage: str | None = None
+    recorder_returncode: int | None = None
     ended_monotonic: float | None = None
     result: dict[str, Any] | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -186,8 +185,8 @@ def new_recording_job(arguments: dict[str, Any]) -> RecordingJob:
         width=width,
         height=height,
         max_duration=max_duration,
-        started_monotonic=time.monotonic(),
-        started_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        started_monotonic=0.0,
+        started_utc="",
         directory=intermediate.parent,
         intermediate=intermediate,
         artifact=artifact,
@@ -251,6 +250,11 @@ def validate_recording_artifact(
     }
 
 
+def candidate_artifact_path(job: RecordingJob) -> Path:
+    """Private path a finalized artifact is built at before it is published."""
+    return job.artifact.with_name(job.artifact.name + ".part")
+
+
 def finalize_recording(job: RecordingJob) -> dict[str, Any]:
     try:
         capture = media.probe_video_stream(job.intermediate)
@@ -266,11 +270,17 @@ def finalize_recording(job: RecordingJob) -> dict[str, Any]:
         capture_width = int(capture.get("width") or 0)
     except (TypeError, ValueError):
         capture_width = 0
+    candidate = candidate_artifact_path(job)
+    candidate.unlink(missing_ok=True)
     if job.fmt == "webm":
-        argv = encoding.recording_webm_argv(job)
+        argv = encoding.recording_webm_argv(job, candidate)
     elif job.fmt == "mp4":
-        argv = encoding.recording_mp4_argv(job)
+        argv = encoding.recording_mp4_argv(job, candidate)
     else:
-        argv = encoding.recording_gif_argv(job, capture_width)
+        argv = encoding.recording_gif_argv(job, capture_width, candidate)
     core.run_command(argv, timeout=600.0)
-    return validate_recording_artifact(job)
+    summary = validate_recording_artifact(job, path=candidate)
+    media.validate_full_video_decode(candidate)
+    os.replace(candidate, job.artifact)
+    return summary
+

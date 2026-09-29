@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
+import time
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import outputs, recording, server, streams, tts
+from seshat import encoding, lifecycle, outputs, recording, server, streams, tts
 
 
 EPOCH_MONOTONIC = 100.0
@@ -106,4 +109,82 @@ def exit_process_on_signal(process: FakeProcess):
     def fake_killpg(pid: int, sig: int) -> None:
         process.receive_signal(sig)
 
-    return patch.object(server.os, "killpg", side_effect=fake_killpg)
+    return patch.object(lifecycle.os, "killpg", side_effect=fake_killpg)
+
+
+class RecordingManagerCase(unittest.TestCase):
+    """Fixture for tests that drive a real RecordingManager with a fake recorder.
+
+    Shared by the manager and lifecycle suites: both need a private runtime
+    directory, a deterministic encoder choice, and a fast clock, and neither
+    should be able to reach the real screen or the real wf-recorder.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        self.output_patch = patch.object(outputs, "get_outputs", return_value=single_output())
+        self.output_patch.start()
+        self.addCleanup(self.output_patch.stop)
+        encoder = patch.object(encoding, "choose_video_encoder", return_value="libsvtav1")
+        encoder.start()
+        self.addCleanup(encoder.stop)
+        h264 = patch.object(encoding, "choose_h264_encoder", return_value="libx264")
+        h264.start()
+        self.addCleanup(h264.stop)
+        real_sleep = time.sleep
+        sleep = patch.object(server.time, "sleep", lambda _seconds: real_sleep(0.005))
+        sleep.start()
+        self.addCleanup(sleep.stop)
+        self.manager = server.RecordingManager()
+
+    def popen(self, process: FakeProcess):
+        def factory(argv, **kwargs):
+            process.argv = argv
+            process.popen_kwargs = kwargs
+            return process
+
+        return patch.object(server.subprocess, "Popen", side_effect=factory)
+
+    def start_ok(
+        self, arguments: dict | None = None, process: FakeProcess | None = None
+    ) -> FakeProcess:
+        process = process or FakeProcess()
+        with self.popen(process):
+            summary = self.manager.start(arguments or {"max_duration_seconds": 30})
+        self.assertEqual(summary["phase"], "recording")
+        return process
+
+    def recordings_dir(self) -> Path:
+        return Path(os.environ["XDG_RUNTIME_DIR"]) / "seshat" / "recordings"
+
+    def wait_terminal(self, timeout: float = 5.0) -> dict:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            summary = self.manager.status()
+            if summary["phase"] in {"completed", "failed"}:
+                return summary
+            thread = self.manager._job.thread if self.manager._job else None
+            if thread is not None:
+                thread.join(timeout=0.05)
+        return self.manager.status()
+
+    def gated_finalize(self) -> tuple[threading.Event, object]:
+        """A finalization that blocks until the test releases it.
+
+        Finalization runs on a worker thread, so asserting that a take is still
+        processing requires holding that thread still. Without the gate the
+        assertion races the worker and fails whenever the worker wins, which is
+        most often under load.
+        """
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+
+        def finalize(_job: recording.RecordingJob) -> dict:
+            gate.wait(timeout=5.0)
+            return {"codec": "av1"}
+
+        return gate, finalize
