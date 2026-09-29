@@ -13,7 +13,9 @@ metadata:
 
 # seshat — record a screen, narrate the take
 
-seshat records a Sway output into a silent artifact, then muxes a synthesized
+seshat records an output of a live Sway or Hyprland session (Omarchy is
+Hyprland; the compositor is detected, or forced with `SESHAT_COMPOSITOR`) into
+a silent artifact, then muxes a synthesized
 narration track aligned to the events that were published while the take ran.
 It never drives the desktop; the tools that do publish a timeline stream for it.
 

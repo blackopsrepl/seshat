@@ -21,6 +21,8 @@ keywords = [
     "tts",
     "wayland",
     "sway",
+    "hyprland",
+    "omarchy",
     "ffmpeg",
 ]
 classifiers = [

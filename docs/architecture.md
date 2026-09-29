@@ -5,8 +5,9 @@
 seshat records a screen and narrates it. It does not drive the desktop.
 
 That sentence is the whole architecture. An agent driving a desktop is already
-talking to a tool server that performs the actions — a Sway server, a browser
-driver, a session service. The recorder cannot be the thing that performs them
+talking to a tool server that performs the actions — a Sway or Hyprland desktop
+server, a browser driver, a session service. The recorder cannot be the thing
+that performs them
 if it is also the thing that records whatever else the machine does. So the
 actions are **published** rather than captured:
 
@@ -37,7 +38,8 @@ Corollary rules that fall out of the boundary:
 
 | layer | modules | responsibility |
 |---|---|---|
-| primitives | `core`, `media` | subprocess execution, session environment recovery, strict parsing, ffprobe |
+| primitives | `core`, `media` | subprocess execution, strict parsing, ffprobe |
+| session | `session` | compositor detection (Sway, Hyprland), IPC environment recovery |
 | contract | `streams` | the published event format: append, discover, parse, window-filter, merge |
 | session fact | `outputs` | the only thing capture needs from the session: output geometry |
 | capture | `recording`, `encoding` | take model, artifact validation, finalization; encoder selection and every ffmpeg argv |

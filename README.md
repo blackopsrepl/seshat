@@ -32,10 +32,14 @@ from her headcloth. She keeps the book; she never invents a word of it.
 ## Requirements
 
 - Python 3.10+ (standard library only — `dependencies = []` is a hard contract).
+- A live **Sway** or **Hyprland** session (Omarchy is Hyprland). The compositor
+  is detected from the session environment and can be forced with
+  `SESHAT_COMPOSITOR=sway|hyprland`; a missing IPC variable (`SWAYSOCK`,
+  `HYPRLAND_INSTANCE_SIGNATURE`) is recovered from the runtime directory, which
+  is how a harness-launched server still finds the desktop.
 - `wf-recorder` for capture, `ffmpeg` + `ffprobe` for finalization, muxing and
-  probing. `swaymsg` (or a `SWAYSOCK` exposing the same JSON) to resolve output
-  geometry. A missing binary is reported as a clear tool error, never an import
-  failure.
+  probing; `hyprctl` or `swaymsg` to resolve output geometry. A missing binary
+  is reported as a clear tool error, never an import failure.
 - Optional: `edge-tts` (keyless, **network**) or `piper` (offline, needs a voice
   model) for narration; `tesseract` for OCR of scene keys.
 

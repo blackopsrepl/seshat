@@ -1,4 +1,4 @@
-"""Record a Sway output and narrate the take as an MCP server."""
+"""Record a Wayland output and narrate the take as an MCP server."""
 
 from .version import SERVER_VERSION
 
