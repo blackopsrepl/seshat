@@ -33,7 +33,7 @@ RECORDING_ENCODER_PREFERENCE = ("libsvtav1", "libaom-av1")
 
 
 def recording_capture_argv(job: RecordingJob) -> list[str]:
-    argv = ["wf-recorder", "-o", job.output]
+    argv = ["wf-recorder", "-D", "-o", job.output]
     if job.region is not None:
         argv.extend(
             [
