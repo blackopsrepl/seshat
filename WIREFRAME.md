@@ -19,7 +19,7 @@ This file describes what is shipped; it is not a roadmap.
 
 ```
 format: "mp4" | "webm" | "gif"        default mp4
-output: "<sway output name>"          inferred when exactly one output is active
+output: "<output name>"               inferred when exactly one output is active
 region: {x, y, width, height}         must be fully contained in the output
 max_duration_seconds: number          default 60 (mp4/webm), 15 (gif); gif capped at 15
 timeline_sources: [path, ...]         default: every *.jsonl in the streams directory
@@ -122,6 +122,7 @@ source.
 | variable | effect |
 |---|---|
 | `SESHAT_COMMAND` | command argv used for MCP self-registration |
+| `SESHAT_COMPOSITOR` | forces the compositor (`sway` or `hyprland`) when detection is ambiguous |
 | `SESHAT_PIPER_MODEL` | default piper voice model path |
 | `XDG_RUNTIME_DIR` | required: runtime root for streams and recordings |
-| `SWAYSOCK`, `WAYLAND_DISPLAY` | recovered when missing, needed to resolve output geometry and to capture |
+| `SWAYSOCK`, `HYPRLAND_INSTANCE_SIGNATURE`, `WAYLAND_DISPLAY` | recovered when missing, needed to resolve output geometry and to capture |

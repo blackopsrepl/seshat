@@ -38,8 +38,10 @@ Guidance for coding agents working in this repository.
 
 ## Project Structure
 
-- `src/seshat/core.py`: tool errors, subprocess execution, session environment
-  recovery, strict parsing helpers.
+- `src/seshat/core.py`: tool errors, subprocess execution, strict parsing
+  helpers.
+- `session.py`: compositor detection and IPC environment recovery (Sway,
+  Hyprland; `SESHAT_COMPOSITOR` override).
 - `streams.py`: the cross-server event stream contract — append, discover,
   parse, window-filter, merge.
 - `outputs.py`: the only session fact capture needs — active output geometry.
