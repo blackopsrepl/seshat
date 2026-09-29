@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from . import core, manager, outputs, recording, streams, tts
+from . import core, manager, outputs, recording, session, streams, tts
 from .version import SERVER_NAME, SERVER_VERSION
 
 
@@ -34,6 +34,14 @@ def tool_seshat_info(_: dict[str, Any]) -> list[dict[str, str]]:
         ]
     except core.ToolError as exc:
         outputs_error = str(exc)
+    session_report: dict[str, Any] = {
+        "compositor": None,
+        "distribution": session.distribution_id(),
+    }
+    try:
+        session_report["compositor"] = session.detect_compositor()
+    except core.ToolError:
+        pass
     info = {
         "server": {"name": SERVER_NAME, "version": SERVER_VERSION},
         "take": manager.RECORDINGS.status(),
@@ -42,6 +50,7 @@ def tool_seshat_info(_: dict[str, Any]) -> list[dict[str, str]]:
             "recordings": str(streams.runtime_root() / recording.RECORDING_DIRECTORY_NAME),
         },
         "streams": [str(path) for path in streams.discover_streams()],
+        "session": session_report,
         "outputs": outputs_report,
         "outputs_error": outputs_error,
         "tts": {
@@ -52,6 +61,7 @@ def tool_seshat_info(_: dict[str, Any]) -> list[dict[str, str]]:
             name: shutil.which(name)
             for name in (
                 "swaymsg",
+                "hyprctl",
                 "wf-recorder",
                 "ffmpeg",
                 "ffprobe",

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import signal
 import subprocess
@@ -221,6 +220,7 @@ def self_test() -> int:
     for name in (
         "python3",
         "swaymsg",
+        "hyprctl",
         "wf-recorder",
         "ffmpeg",
         "ffprobe",
@@ -231,17 +231,14 @@ def self_test() -> int:
     ):
         checks.append((name, shutil.which(name) or "missing"))
     require_binaries(["wf-recorder", "ffmpeg", "ffprobe"])
-    require_session()
+    compositor = require_session()
     outputs = get_outputs()
     summary = {
         "ok": True,
         "server": SERVER_NAME,
         "version": SERVER_VERSION,
-        "environment": {
-            "WAYLAND_DISPLAY": os.environ.get("WAYLAND_DISPLAY"),
-            "SWAYSOCK": os.environ.get("SWAYSOCK"),
-            "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR"),
-        },
+        "environment": session_environment(),
+        "session": {"compositor": compositor, "distribution": distribution_id()},
         "binaries": dict(checks),
         "outputs": [
             {
@@ -266,16 +263,13 @@ def doctor() -> int:
             "command": command_argv(),
             "module_path": __file__,
         },
-        "environment": {
-            "WAYLAND_DISPLAY": os.environ.get("WAYLAND_DISPLAY"),
-            "SWAYSOCK": os.environ.get("SWAYSOCK"),
-            "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR"),
-        },
+        "environment": session_environment(),
         "binaries": {
             name: shutil.which(name)
             for name in (
                 "python3",
                 "swaymsg",
+                "hyprctl",
                 "wf-recorder",
                 "ffmpeg",
                 "ffprobe",
@@ -295,9 +289,11 @@ def doctor() -> int:
         "codex_mcp": None,
     }
     try:
-        require_session()
+        compositor = require_session()
         report["session"] = {
             "ok": True,
+            "compositor": compositor,
+            "distribution": distribution_id(),
             "outputs": [
                 {
                     "name": output.get("name"),

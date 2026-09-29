@@ -20,6 +20,7 @@ from . import core
 
 
 COMPOSITOR_ENV = "SESHAT_COMPOSITOR"
+OS_RELEASE_PATH = Path("/etc/os-release")
 
 
 def _discover_sway_socket(runtime_dir: str) -> str | None:
@@ -179,3 +180,21 @@ def session_environment() -> dict[str, Any]:
         "HYPRLAND_INSTANCE_SIGNATURE": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"),
         "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR"),
     }
+
+
+def distribution_id(path: Path = OS_RELEASE_PATH) -> str | None:
+    """The os-release ID of the host distribution, ``omarchy`` on Omarchy.
+
+    Omarchy is a Hyprland distribution, so its sessions are detected as
+    Hyprland; this fact is diagnostic only, reported by seshat_info,
+    ``--doctor`` and ``--self-test``.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "ID":
+            return value.strip().strip('"') or None
+    return None
