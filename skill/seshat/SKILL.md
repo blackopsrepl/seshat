@@ -23,9 +23,9 @@ It never drives the desktop; the tools that do publish a timeline stream for it.
 
 1. `seshat_info` — confirm the detected compositor (`session.compositor`,
    `session.distribution`), the capture output, the streams that will be
-   ingested, the binaries narration will use (`piper: null` means `edge-tts`
-   only, which is network dependent). Do this before promising anyone a
-   narrated video.
+   ingested, and both narration binaries: `binaries.piper` for offline speech
+   and `binaries.edge-tts` for network-dependent speech. A null path means that
+   engine is unavailable. Do this before promising anyone a narrated video.
 2. Decide the demonstration's driving tool server and check it publishes a
    stream: its file name shows up in `seshat_info.streams`. If it does not, the
    take will have no event anchors — plan `at_ms` anchors or `recording_scenes`.
@@ -99,10 +99,10 @@ shows; use the event only for its timing.
   log are kept and their paths are in the failure detail; the take is not
   recoverable as-is.
 - **`narration failed: ... No such filter: 'subtitles'`.** The ffmpeg on `PATH`
-  lacks libass, so captions cannot be burned. Point `PATH` at a full build
-  (on mixed brew/Arch hosts: `/usr/bin/ffmpeg` first) and call
-  `recording_voiceover` again, or pass `subtitles=false` for narration without
-  captions. Either way the silent artifact survived.
+  lacks libass, so captions cannot be burned. Retry the current take with
+  `subtitles=false`. To burn captions, start the server with a full ffmpeg on
+  `PATH` before recording (on mixed brew/Arch hosts: `/usr/bin/ffmpeg` first);
+  restarting to change `PATH` forgets the server's in-memory takes.
 - **`unknown recording id`.** Takes live in the server process: a restarted
   server cannot narrate, re-analyze, or even report an earlier take. Record,
   narrate and collect the artifact within one server session.

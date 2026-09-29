@@ -176,9 +176,10 @@ re-encoded when captions are burned; otherwise it is stream-copied. The result i
 re-validated: exactly one video stream plus exactly one audio stream. A
 narration failure never destroys the take: the silent artifact stays in place
 and the reason lands in `result.narration.error` — for example, an ffmpeg build
-without the `subtitles` filter cannot burn captions, and the fix is to point
-`PATH` at a full build and call `recording_voiceover` again, or to pass
-`subtitles=false`.
+without the `subtitles` filter cannot burn captions. Retry that take with
+`subtitles=false`. To burn captions, start the server with a libass-enabled
+ffmpeg on `PATH` before recording; restarting the server to change `PATH`
+forgets its in-memory takes.
 
 **Anchors are checked against the picture, not the timeline.** Both `event_id`
 and `at_ms` are validated against the playable video extent — the video stream's
