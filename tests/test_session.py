@@ -144,5 +144,24 @@ class SessionEnvironmentTests(SessionTestCase):
         self.assertEqual(report["XDG_RUNTIME_DIR"], self.runtime)
 
 
+class DistributionTests(unittest.TestCase):
+    def release(self, text: str | None) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "os-release"
+        if text is not None:
+            path.write_text(text, encoding="utf-8")
+        self.addCleanup(path.unlink, missing_ok=True)
+        return path
+
+    def test_reads_the_os_release_id(self) -> None:
+        path = self.release('NAME="Omarchy"\nID=omarchy\nID_LIKE=arch\nBUILD_ID="4.0.4"\n')
+        self.assertEqual(session.distribution_id(path), "omarchy")
+
+    def test_a_missing_file_or_id_is_not_a_distribution(self) -> None:
+        self.assertIsNone(session.distribution_id(self.release(None)))
+        self.assertIsNone(session.distribution_id(self.release("PRETTY_NAME=\"Linux\"\n")))
+
+
 if __name__ == "__main__":
     unittest.main()
