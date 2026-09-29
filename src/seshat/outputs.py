@@ -5,7 +5,8 @@ is which output (and which rect) to hand to the capture backend. Keeping that
 probe here, rather than importing a desktop-control module, is what lets the
 recorder live on its own. Sway outputs are passed through verbatim; Hyprland
 monitors are projected onto the same ``name``/``rect`` shape the recorder and
-the diagnostics consume.
+the diagnostics consume, with the rect derived in logical layout coordinates
+rather than copied.
 """
 
 from __future__ import annotations
@@ -30,11 +31,13 @@ def _hyprland_outputs() -> list[dict[str, Any]]:
 def _monitor_output(monitor: dict[str, Any]) -> dict[str, Any]:
     """Project one ``hyprctl`` monitor onto the output shape the recorder consumes.
 
-    Hyprland reports layout geometry — position and scaled size — which is the
-    same logical space Sway's rect and wf-recorder's region live in, and it has
-    no ``active`` flag: a monitor is active unless it is ``disabled``.
-    ``current_mode`` is synthesized from the layout size and refresh rate (in
-    mHz, matching Sway) so diagnostics can compare outputs across compositors.
+    ``hyprctl`` reports ``width``/``height`` as pixel dimensions but ``x``/``y``
+    as layout positions, so the rect is derived rather than copied: it has to be
+    the monitor's logical box, which is the space Sway's rect and wf-recorder's
+    region live in. Hyprland has no ``active`` flag either — a monitor is active
+    unless it is ``disabled``. ``current_mode`` keeps the unscaled pixel
+    dimensions and the refresh rate in mHz, matching Sway, so diagnostics can
+    compare outputs across compositors.
     """
     name = monitor.get("name")
     if not isinstance(name, str) or not name:
@@ -50,28 +53,49 @@ def _monitor_output(monitor: dict[str, Any]) -> dict[str, Any]:
         "transform": monitor.get("transform"),
         "scale": monitor.get("scale"),
         "rect": rect,
-        "current_mode": _monitor_mode(monitor, rect),
+        "current_mode": _monitor_mode(monitor),
         "available_modes": monitor.get("availableModes"),
     }
 
 
+def _rotated(transform: Any) -> bool:
+    """Whether a wl_output transform swaps the output's axes (90°/270°)."""
+    try:
+        return int(transform) % 2 == 1
+    except (TypeError, ValueError):
+        return False
+
+
 def _monitor_rect(monitor: dict[str, Any]) -> dict[str, int]:
+    """The monitor's box in logical layout coordinates.
+
+    Hyprland's monitor size is its pixel size divided by the monitor scale, with
+    the axes swapped for a rotated transform — the geometry it advertises through
+    xdg-output, which is the geometry ``wf-recorder`` measures a ``-g`` region
+    against. ``x``/``y`` are already layout positions and pass through unchanged.
+    """
+    name = monitor.get("name")
+    try:
+        x = int(monitor["x"])
+        y = int(monitor["y"])
+        width = int(monitor["width"])
+        height = int(monitor["height"])
+        scale = float(monitor.get("scale", 1))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise core.ToolError(f"monitor {name!r} has invalid geometry") from exc
+    if scale <= 0:
+        raise core.ToolError(f"monitor {name!r} has an invalid scale {monitor.get('scale')!r}")
+    if _rotated(monitor.get("transform")):
+        width, height = height, width
+    return {"x": x, "y": y, "width": round(width / scale), "height": round(height / scale)}
+
+
+def _monitor_mode(monitor: dict[str, Any]) -> dict[str, int] | None:
+    """The monitor's mode as Sway reports one: the pixel resolution and mHz refresh."""
     try:
         return {
-            "x": int(monitor["x"]),
-            "y": int(monitor["y"]),
             "width": int(monitor["width"]),
             "height": int(monitor["height"]),
-        }
-    except (KeyError, TypeError, ValueError) as exc:
-        raise core.ToolError(f"monitor {monitor.get('name')!r} has invalid geometry") from exc
-
-
-def _monitor_mode(monitor: dict[str, Any], rect: dict[str, int]) -> dict[str, int] | None:
-    try:
-        return {
-            "width": rect["width"],
-            "height": rect["height"],
             "refresh": int(float(monitor["refreshRate"]) * 1000),
         }
     except (KeyError, TypeError, ValueError):
