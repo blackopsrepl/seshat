@@ -12,6 +12,11 @@ Guidance for coding agents working in this repository.
   documents are performed by whatever tool server the harness called, and reach
   the timeline as published event streams (`streams.py`). There is exactly one
   way into a timeline, and it is ingestion.
+- Sessions are Sway or Hyprland (Omarchy is Hyprland), detected from the session
+  environment by `session.py` with `SESHAT_COMPOSITOR` as the override; a
+  missing compositor client is a `ToolError`. Capture assumes only
+  wlr-screencopy (`wf-recorder`), so adding a compositor means adding an output
+  adaptor, not a capture backend.
 - The silent recording contract is frozen: silent takes carry no audio, the
   artifact has exactly one video stream (H.264 MP4 by default, AV1 WebM, or
   GIF), and `validate_recording_artifact` keeps rejecting unexpected audio.

@@ -38,10 +38,19 @@ from her headcloth. She keeps the book; she never invents a word of it.
   `HYPRLAND_INSTANCE_SIGNATURE`) is recovered from the runtime directory, which
   is how a harness-launched server still finds the desktop.
 - `wf-recorder` for capture, `ffmpeg` + `ffprobe` for finalization, muxing and
-  probing; `hyprctl` or `swaymsg` to resolve output geometry. A missing binary
-  is reported as a clear tool error, never an import failure.
+  probing; `hyprctl` or `swaymsg` to resolve output geometry. Caption burn-in
+  additionally needs an ffmpeg built with libass — the `subtitles` filter —
+  which minimal builds ship without. A missing binary is reported as a clear
+  tool error, never an import failure.
 - Optional: `edge-tts` (keyless, **network**) or `piper` (offline, needs a voice
   model) for narration; `tesseract` for OCR of scene keys.
+
+On Arch or Omarchy:
+
+```bash
+sudo pacman -S --needed wf-recorder ffmpeg tesseract   # hyprctl ships with Hyprland
+uv tool install edge-tts                               # or piper + a voice model
+```
 
 `make check` runs the unit tests, bytecode compilation, and the file-length check.
 `make help` lists every target; `make ci-local` runs the whole gate plus a
@@ -134,6 +143,13 @@ its actions to be narratable publishes them — one JSON object per line — to
 - Malformed, oversized or unreadable lines are counted in the timeline's
   `sources` report and skipped. A broken stream can never destroy a take.
 
+The contract is driver-agnostic. On Sway,
+[`computer-use-sway`](https://github.com/blackopsrepl/computer-use-sway) plays
+this emitter role; on Hyprland or Omarchy, whatever drives the desktop can
+publish the same lines from the process that performs the actions. A driver
+that publishes nothing still records fine, but the take has no event anchors —
+narrate with `at_ms` or fall back to `recording_scenes`.
+
 Pass `timeline_sources` to `recording_start` to ingest specific files instead of
 everything in the streams directory; explicit paths are validated when the take
 starts, not when it is finalized.
@@ -157,7 +173,12 @@ the resolved anchors (with `offset_ms`, optional tempo compression via
 `fit="compress"`, and lead-silence trimming), muxes it over the existing video,
 and — unless `subtitles=false` — burns styled ASS captions. The video is only
 re-encoded when captions are burned; otherwise it is stream-copied. The result is
-re-validated: exactly one video stream plus exactly one audio stream.
+re-validated: exactly one video stream plus exactly one audio stream. A
+narration failure never destroys the take: the silent artifact stays in place
+and the reason lands in `result.narration.error` — for example, an ffmpeg build
+without the `subtitles` filter cannot burn captions, and the fix is to point
+`PATH` at a full build and call `recording_voiceover` again, or to pass
+`subtitles=false`.
 
 **Anchors are checked against the picture, not the timeline.** Both `event_id`
 and `at_ms` are validated against the playable video extent — the video stream's
@@ -199,3 +220,7 @@ you observed yourself — never in the mere existence of an event.
   drives a Sway session and publishes the timeline stream that this server
   ingests. Recording and narration were extracted from that project so that both
   could stand on their own.
+- [`omarchy-computer-use`](https://github.com/enricofranke/omarchy-computer-use) —
+  gives an agent its own nested Hyprland session on Omarchy. It does not publish
+  a timeline stream, so takes it drives narrate via `at_ms` or
+  `recording_scenes` unless something else publishes for them.

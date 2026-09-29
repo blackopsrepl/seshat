@@ -62,7 +62,8 @@ completed ──recording_voiceover──> narrating ──> completed   (failur
 ```
 
 - `RecordingManager` holds one lock, one current take, and a history of takes by
-  id. Every mutation is under that lock.
+  id — all in process memory, so a server restart forgets every take, completed
+  or not. Every mutation is under that lock.
 - Finalization is a worker thread: it re-encodes the intermediate, validates the
   artifact, ingests the timeline streams, writes the sidecar, then discards the
   intermediate and the capture log.
