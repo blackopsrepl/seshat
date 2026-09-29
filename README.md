@@ -1,5 +1,7 @@
 # seshat
 
+<img src="docs/assets/seshat-mascot.png" alt="Sesh, the seshat mascot: an ivory scribe-keeper crowned with Seshat's star and horns, a recording lens set in her chest and the goddess's notched measuring rod in her hand" width="208" align="right" />
+
 An MCP server that **records a screen and narrates the take**.
 
 seshat captures an output (or a region of one) into a silent artifact, ingests
@@ -9,6 +11,11 @@ styled captions burned in — over the recorded video. The prose is the caller's
 the timing, the speech, the captions and the container are seshat's.
 
 It is named after the Egyptian goddess of writing, measurement and record-keeping.
+
+**Sesh** is the mascot: an ivory scribe-keeper crowned with Seshat's star and
+horns, the recording lens set in her chest, the goddess's notched measuring rod —
+the take timeline — in her hand, and the events other servers publish trailing
+from her headcloth. She keeps the book; she never invents a word of it.
 
 ## What it is, and what it is not
 
