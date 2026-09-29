@@ -11,7 +11,11 @@ from seshat import core, outputs
 
 
 def hyprland_monitors() -> list[dict]:
-    """The shape ``hyprctl -j monitors`` reports (sampled from a live session)."""
+    """The shape ``hyprctl -j monitors`` reports (sampled from a live session).
+
+    ``width``/``height`` are the monitor's pixel size while ``x``/``y`` are its
+    layout position: the two live in different spaces once ``scale`` is not 1.
+    """
     return [
         {
             "id": 0,
@@ -83,11 +87,33 @@ class HyprlandOutputTests(unittest.TestCase):
             [output["rect"] for output in result],
             [
                 {"x": 0, "y": 0, "width": 1366, "height": 768},
-                {"x": 1366, "y": 0, "width": 1920, "height": 1080},
+                {"x": 1366, "y": 0, "width": 864, "height": 1536},
             ],
         )
 
-    def test_current_mode_is_synththesized_in_millihertz_like_sway(self) -> None:
+    def test_a_scaled_monitor_is_projected_onto_logical_units(self) -> None:
+        monitors = hyprland_monitors()
+        monitors[0]["width"], monitors[0]["height"] = 2880, 1800
+        monitors[0]["scale"] = 1.875
+        output = self.get(monitors)[0]
+        self.assertEqual(output["rect"], {"x": 0, "y": 0, "width": 1536, "height": 960})
+        self.assertEqual(output["scale"], 1.875)
+
+    def test_a_rotated_monitor_swaps_the_logical_axes(self) -> None:
+        monitors = hyprland_monitors()
+        monitors[1]["disabled"] = False
+        output = self.get(monitors)[1]
+        self.assertEqual(output["rect"], {"x": 1366, "y": 0, "width": 864, "height": 1536})
+        self.assertEqual(output["current_mode"], {"width": 1920, "height": 1080, "refresh": 144000})
+
+    def test_current_mode_keeps_the_unscaled_pixel_dimensions(self) -> None:
+        monitors = hyprland_monitors()
+        monitors[0]["scale"] = 2
+        output = self.get(monitors)[0]
+        self.assertEqual(output["rect"], {"x": 0, "y": 0, "width": 683, "height": 384})
+        self.assertEqual(output["current_mode"], {"width": 1366, "height": 768, "refresh": 60059})
+
+    def test_current_mode_is_synthesized_in_millihertz_like_sway(self) -> None:
         output = self.get(hyprland_monitors())[0]
         self.assertEqual(output["current_mode"], {"width": 1366, "height": 768, "refresh": 60059})
 
@@ -103,6 +129,13 @@ class HyprlandOutputTests(unittest.TestCase):
         with self.assertRaises(core.ToolError) as ctx:
             self.get(monitors)
         self.assertIn("invalid geometry", str(ctx.exception))
+
+    def test_an_invalid_scale_is_a_tool_error(self) -> None:
+        monitors = hyprland_monitors()
+        monitors[0]["scale"] = 0
+        with self.assertRaises(core.ToolError) as ctx:
+            self.get(monitors)
+        self.assertIn("invalid scale", str(ctx.exception))
 
     def test_a_monitor_without_a_name_is_a_tool_error(self) -> None:
         monitors = hyprland_monitors()
