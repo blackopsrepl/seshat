@@ -14,8 +14,10 @@ from seshat import core, session
 
 
 def bind_socket(path: Path) -> None:
+    """Leave a bound socket file behind; discovery only stats the path."""
     sock = socket.socket(socket.AF_UNIX)
     sock.bind(str(path))
+    sock.close()
 
 
 class SessionTestCase(unittest.TestCase):
