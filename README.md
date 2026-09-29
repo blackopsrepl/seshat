@@ -53,6 +53,26 @@ hermes mcp add seshat --command /path/to/venv/bin/seshat
 codex mcp add seshat -- /path/to/venv/bin/seshat
 ```
 
+## Agent skill
+
+`skill/seshat/SKILL.md` is the operating procedure for an agent driving this
+server: the take lifecycle, the anchor rules, and the failure modes that produce
+silent or unanchored takes. It ships in the source distribution, and the copy in
+this repository is the source of truth — installed copies are copies.
+
+```bash
+# opencode
+mkdir -p ~/.config/opencode/skill
+cp -r skill/seshat ~/.config/opencode/skill/
+
+# Hermes
+mkdir -p ~/.hermes/skills/media
+cp -r skill/seshat ~/.hermes/skills/media/
+```
+
+Re-run the copy after changing the skill; a stale installed copy is how an agent
+ends up calling tools this server no longer has.
+
 ## Recording a take
 
 ```
