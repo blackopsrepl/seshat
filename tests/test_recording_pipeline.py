@@ -86,6 +86,14 @@ class ProbeAndValidateTests(unittest.TestCase):
             with self.assertRaises(server.ToolError):
                 server.probe_media(server.Path("/tmp/x.webm"))
 
+    def test_full_decode_checks_every_video_frame(self) -> None:
+        with patch.object(core, "run_command") as run:
+            media.validate_full_video_decode(server.Path("/tmp/take.mp4"))
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[0], "ffmpeg")
+        self.assertIn("-xerror", argv)
+        self.assertEqual(argv[-3:], ["-f", "null", "-"])
+
     def test_valid_webm_artifact_passes(self) -> None:
         job = self.make_job("webm")
         with patch.object(media, "probe_media", return_value=self.webm_probe()):
@@ -196,6 +204,58 @@ class FinalizeRecordingTests(unittest.TestCase):
         self.assertIn("unreadable intermediate", message)
         self.assertNotIn("deadline", message)
 
+    def test_finalize_publishes_only_after_candidate_decodes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = self.unreadable_intermediate_job(tmpdir, auto_stopped=False)
+            job.intermediate.write_bytes(b"capture")
+            capture = {"codec_type": "video", "width": 1280, "height": 720}
+            candidate = job.artifact.with_name(job.artifact.name + ".part")
+
+            def run(argv, timeout):
+                if argv[0] == "ffmpeg" and argv[-1] == str(candidate):
+                    candidate.write_bytes(b"validated-candidate")
+                return None
+
+            summary = {"codec": "h264", "media_duration_seconds": 1.0}
+            with patch.object(media, "probe_video_stream", return_value=capture):
+                with patch.object(core, "run_command", side_effect=run) as command:
+                    with patch.object(
+                        recording, "validate_recording_artifact", return_value=summary
+                    ) as validate:
+                        result = recording.finalize_recording(job)
+
+            self.assertEqual(result, summary)
+            self.assertEqual(job.artifact.read_bytes(), b"validated-candidate")
+            self.assertFalse(candidate.exists())
+            validate.assert_called_once_with(job, path=candidate)
+            self.assertEqual(command.call_count, 2)
+
+    def test_decode_failure_retains_candidate_without_publishing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job = self.unreadable_intermediate_job(tmpdir, auto_stopped=False)
+            job.intermediate.write_bytes(b"capture")
+            capture = {"codec_type": "video", "width": 1280, "height": 720}
+            candidate = job.artifact.with_name(job.artifact.name + ".part")
+
+            def run(argv, timeout):
+                if argv[-1] == str(candidate):
+                    candidate.write_bytes(b"corrupt-tail")
+                    return None
+                raise server.ToolError("Invalid data found when processing input")
+
+            with patch.object(media, "probe_video_stream", return_value=capture):
+                with patch.object(core, "run_command", side_effect=run):
+                    with patch.object(
+                        recording,
+                        "validate_recording_artifact",
+                        return_value={"codec": "h264"},
+                    ):
+                        with self.assertRaises(server.ToolError):
+                            recording.finalize_recording(job)
+
+            self.assertEqual(job.artifact.read_bytes(), b"")
+            self.assertEqual(candidate.read_bytes(), b"corrupt-tail")
+
     def test_finalize_converts_then_validates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):
@@ -227,16 +287,23 @@ class FinalizeRecordingTests(unittest.TestCase):
                     }
                 ],
             }
+            candidate = job.artifact.with_name(job.artifact.name + ".part")
+
+            def run_command(argv, timeout):
+                if argv[-1] == str(candidate):
+                    candidate.write_bytes(b"artifact")
+                return None
+
             with patch.object(media, "probe_media", side_effect=[capture_probe, artifact_probe]
             ) as probe:
-                with patch.object(core, "run_command") as run:
+                with patch.object(core, "run_command", side_effect=run_command) as run:
                     summary = server.finalize_recording(job)
 
             self.assertEqual(probe.call_count, 2)
-            self.assertEqual(run.call_count, 1)
-            ffmpeg_argv = run.call_args[0][0]
+            self.assertEqual(run.call_count, 2)
+            ffmpeg_argv = run.call_args_list[0].args[0]
             self.assertEqual(ffmpeg_argv[0], "ffmpeg")
-            self.assertEqual(ffmpeg_argv[-1], str(job.artifact))
+            self.assertEqual(ffmpeg_argv[-1], str(candidate))
             self.assertIn("libsvtav1", ffmpeg_argv)
             self.assertEqual(summary["media_duration_seconds"], 9.9)
 
@@ -270,11 +337,18 @@ class FinalizeRecordingTests(unittest.TestCase):
                     }
                 ],
             }
+            candidate = job.artifact.with_name(job.artifact.name + ".part")
+
+            def run_command(argv, timeout):
+                if argv[-1] == str(candidate):
+                    candidate.write_bytes(b"artifact")
+                return None
+
             with patch.object(media, "probe_media", side_effect=[capture_probe, artifact_probe]
             ):
-                with patch.object(core, "run_command") as run:
+                with patch.object(core, "run_command", side_effect=run_command) as run:
                     server.finalize_recording(job)
-            ffmpeg_argv = run.call_args[0][0]
+            ffmpeg_argv = run.call_args_list[0].args[0]
             self.assertIn("scale=960:-1:flags=lanczos", " ".join(ffmpeg_argv))
 
 

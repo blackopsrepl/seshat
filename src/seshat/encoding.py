@@ -90,7 +90,7 @@ def av1_encoder_args(encoder: str) -> list[str]:
     return ["-crf", "30", "-cpu-used", "6", "-row-mt", "1", "-tiles", "2x2"]
 
 
-def recording_webm_argv(job: RecordingJob) -> list[str]:
+def recording_webm_argv(job: RecordingJob, output_path: Path | None = None) -> list[str]:
     filters = [
         f"fps={RECORDING_VIDEO_FPS}",
         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -122,13 +122,13 @@ def recording_webm_argv(job: RecordingJob) -> list[str]:
             "expr:gte(t,n_forced*2)",
             "-f",
             "webm",
-            str(job.artifact),
+            str(output_path or job.artifact),
         ]
     )
     return argv
 
 
-def recording_mp4_argv(job: RecordingJob) -> list[str]:
+def recording_mp4_argv(job: RecordingJob, output_path: Path | None = None) -> list[str]:
     filters = [
         f"fps={RECORDING_VIDEO_FPS}",
         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -158,11 +158,13 @@ def recording_mp4_argv(job: RecordingJob) -> list[str]:
         RECORDING_MP4_PRESET,
     ]
     argv.extend(container_mux_flags("mp4"))
-    argv.extend(["-f", "mp4", str(job.artifact)])
+    argv.extend(["-f", "mp4", str(output_path or job.artifact)])
     return argv
 
 
-def recording_gif_argv(job: RecordingJob, capture_width: int) -> list[str]:
+def recording_gif_argv(
+    job: RecordingJob, capture_width: int, output_path: Path | None = None
+) -> list[str]:
     filters = [f"fps={RECORDING_GIF_FPS}"]
     if capture_width > RECORDING_GIF_MAX_WIDTH:
         filters.append(f"scale={RECORDING_GIF_MAX_WIDTH}:-1:flags=lanczos")
@@ -190,7 +192,7 @@ def recording_gif_argv(job: RecordingJob, capture_width: int) -> list[str]:
         "-1",
         "-f",
         "gif",
-        str(job.artifact),
+        str(output_path or job.artifact),
     ]
 
 

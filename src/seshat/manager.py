@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import os
 import subprocess
-import signal
 import threading
 import time
 from typing import Any
 
-from . import core, encoding, narration, recording, scenes, streams, timeline, tts
+from . import (
+    core,
+    encoding,
+    lifecycle,
+    narration,
+    recording,
+    reporting,
+    scenes,
+    streams,
+    timeline,
+    tts,
+)
 
 
 class RecordingManager:
@@ -17,8 +27,6 @@ class RecordingManager:
         self._lock = threading.Lock()
         self._job: recording.RecordingJob | None = None
         self._jobs: dict[str, recording.RecordingJob] = {}
-
-    # -- helpers ---------------------------------------------------------
 
     @staticmethod
     def _intermediate_size(job: recording.RecordingJob) -> int:
@@ -43,45 +51,6 @@ class RecordingManager:
         except OSError:
             return ""
         return data[-recording.RECORDING_LOG_TAIL_BYTES:].decode("utf-8", errors="replace").strip()
-
-    @staticmethod
-    def _signal_group(process: subprocess.Popen, sig: int) -> None:
-        if process.poll() is not None:
-            return
-        try:
-            os.killpg(process.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            pass
-
-    @staticmethod
-    def _wait_exited(process: subprocess.Popen, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if process.poll() is not None:
-                return True
-            time.sleep(0.05)
-        return process.poll() is not None
-
-    def _terminate_process_group(self, process: subprocess.Popen) -> bool:
-        if process.poll() is not None:
-            return True
-        escalations = (
-            (signal.SIGINT, recording.RECORDING_STOP_TIMEOUT_SECONDS, True),
-            (signal.SIGTERM, recording.RECORDING_TERM_TIMEOUT_SECONDS, False),
-            (signal.SIGKILL, recording.RECORDING_KILL_TIMEOUT_SECONDS, False),
-        )
-        for sig, timeout, was_graceful in escalations:
-            if process.poll() is not None:
-                return True
-            self._signal_group(process, sig)
-            if self._wait_exited(process, timeout):
-                return was_graceful
-        if process.poll() is None:
-            try:
-                process.wait(timeout=10.0)
-            except subprocess.TimeoutExpired:
-                pass
-        return False
 
     @staticmethod
     def _discard_intermediate(job: recording.RecordingJob) -> None:
@@ -138,6 +107,8 @@ class RecordingManager:
             except (OSError, ValueError) as exc:
                 self._cleanup_failed_start(new_job)
                 raise core.ToolError(f"failed to launch wf-recorder: {exc}") from exc
+            new_job.started_monotonic = time.monotonic()
+            new_job.started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             time.sleep(recording.RECORDING_STARTUP_PROBE_SECONDS)
             if new_job.process.poll() is not None:
                 detail = self._log_tail(new_job)
@@ -161,7 +132,12 @@ class RecordingManager:
             if job.phase == "recording":
                 process = job.process
                 if process is not None and process.poll() is not None:
-                    job.ended_monotonic = time.monotonic()
+                    exited = time.monotonic()
+                    job.stop_requested_monotonic = exited
+                    job.ended_monotonic = exited
+                    job.process_exited_monotonic = exited
+                    job.termination_stage = "natural"
+                    job.recorder_returncode = process.returncode
                     self._close_log_fd(job)
                     if process.returncode != 0:
                         tail = self._log_tail(job)
@@ -186,7 +162,7 @@ class RecordingManager:
             if job is None or job.phase != "recording":
                 phase = job.phase if job is not None else "idle"
                 raise core.ToolError(f"no active recording to stop (phase: {phase})")
-            self._end_capture(job)
+            self._request_stop(job)
             return self._summary(job)
 
     def ingest_events(self, job: recording.RecordingJob) -> None:
@@ -289,30 +265,77 @@ class RecordingManager:
         }
 
     def shutdown(self) -> None:
+        worker: threading.Thread | None = None
         with self._lock:
             job = self._job
             if job is None or job.phase != "recording":
                 return
             if job.detail is None:
                 job.detail = "capture ended at server shutdown"
-            self._end_capture(job)
+            self._request_stop(job)
+            worker = job.thread
+        if worker is not None:
+            worker.join(timeout=sum((
+                lifecycle.RECORDING_STOP_TIMEOUT_SECONDS,
+                lifecycle.RECORDING_TERM_TIMEOUT_SECONDS,
+                lifecycle.RECORDING_KILL_TIMEOUT_SECONDS,
+                lifecycle.RECORDING_FINAL_WAIT_SECONDS,
+            )) + 1.0)
 
     # -- internals -------------------------------------------------------
 
-    def _end_capture(self, job: recording.RecordingJob) -> None:
-        """Stop the recorder and begin finalization. Caller must hold the lock."""
+    def _request_stop(self, job: recording.RecordingJob) -> None:
+        """Close the capture window and stop the recorder without holding the manager lock."""
+        stopped = time.monotonic()
+        job.stop_requested_monotonic = stopped
+        job.ended_monotonic = stopped
         job.phase = "stopping"
+        worker = threading.Thread(target=self._stop_recorder, args=(job,), daemon=True)
+        job.thread = worker
+        worker.start()
+
+    def _stop_recorder(self, job: recording.RecordingJob) -> None:
         process = job.process
-        if process is not None and process.poll() is None:
-            job.forced = not self._terminate_process_group(process)
-        job.ended_monotonic = time.monotonic()
-        self._close_log_fd(job)
-        if self._intermediate_size(job) == 0:
-            self._fail(job, "capture produced no data")
+        try:
+            if process is None:
+                raise core.ToolError("wf-recorder process is unavailable")
+            outcome = lifecycle.terminate_process_group(process)
+        except core.ToolError as exc:
+            with self._lock:
+                self._close_log_fd(job)
+                self._fail(job, f"recorder shutdown failed: {exc}")
             return
-        job.phase = "processing"
-        job.thread = threading.Thread(target=self._finalize, args=(job,), daemon=True)
-        job.thread.start()
+        except Exception as exc:
+            # A worker that dies silently would leave the take in `stopping` forever.
+            core.eprint(f"unexpected recorder shutdown error for {job.id}: {exc}")
+            with self._lock:
+                self._close_log_fd(job)
+                self._fail(job, "unexpected recorder shutdown failure; see server log")
+            return
+
+        with self._lock:
+            job.process_exited_monotonic = outcome.process_exited_monotonic
+            job.termination_stage = outcome.stage
+            job.recorder_returncode = outcome.returncode
+            self._close_log_fd(job)
+            if outcome.stage == "sigkill":
+                self._fail(job, "wf-recorder required SIGKILL; capture may be truncated")
+                return
+            if outcome.returncode != 0:
+                tail = self._log_tail(job)
+                self._fail(
+                    job,
+                    f"wf-recorder exited during shutdown (code {outcome.returncode})"
+                    + (f": {tail}" if tail else ""),
+                )
+                return
+            if self._intermediate_size(job) == 0:
+                self._fail(job, "capture produced no data")
+                return
+            job.phase = "processing"
+            worker = threading.Thread(target=self._finalize, args=(job,), daemon=True)
+            job.thread = worker
+            worker.start()
 
     def _watchdog(self, job: recording.RecordingJob) -> None:
         deadline = job.started_monotonic + job.max_duration
@@ -326,7 +349,7 @@ class RecordingManager:
                     job.auto_stopped = True
                     if exceeded_size and not exceeded_time:
                         job.detail = "recording stopped: intermediate size limit reached"
-                    self._end_capture(job)
+                    self._request_stop(job)
                     return
             time.sleep(0.5)
 
@@ -357,6 +380,9 @@ class RecordingManager:
             artifact_bytes = job.artifact.stat().st_size
         except OSError:
             artifact_bytes = 0
+        shutdown_latency = lifecycle.shutdown_latency_seconds(
+            job.stop_requested_monotonic, job.process_exited_monotonic
+        )
         result = {
             "id": job.id,
             "phase": "completed",
@@ -368,7 +394,10 @@ class RecordingManager:
             "capture_elapsed_seconds": round(capture_elapsed, 3),
             "latest_event_ms": latest_event_ms,
             "events_beyond_media": events_beyond_media,
-            "graceful": not job.forced,
+            "graceful": job.termination_stage != "sigkill" and job.recorder_returncode == 0,
+            "termination_stage": job.termination_stage,
+            "recorder_returncode": job.recorder_returncode,
+            "shutdown_latency_seconds": shutdown_latency,
             "audio_included": False,
             "cursor_included": True,
             "auto_stopped": job.auto_stopped,
@@ -423,59 +452,7 @@ class RecordingManager:
                 job.result["narration"] = narration_meta
 
     def _summary(self, job: recording.RecordingJob) -> dict[str, Any]:
-        base = {
-            "id": job.id,
-            "format": job.fmt,
-            "output": job.output,
-            "region": job.region,
-            "audio_included": bool(job.result and job.result.get("audio_included")),
-            "cursor_included": True,
-        }
-        if job.phase == "recording":
-            return {
-                **base,
-                "phase": "recording",
-                "width": job.width,
-                "height": job.height,
-                "elapsed_seconds": round(time.monotonic() - job.started_monotonic, 3),
-                "max_duration_seconds": job.max_duration,
-                "bytes": self._intermediate_size(job),
-            }
-        if job.phase == "stopping":
-            return {
-                **base,
-                "phase": "stopping",
-                "capture_elapsed_seconds": round(
-                    (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 3
-                ),
-            }
-        if job.phase == "processing":
-            return {
-                **base,
-                "phase": "processing",
-                "capture_elapsed_seconds": round(
-                    (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 3
-                ),
-                "note": "finalizing artifact; poll recording_status until completed or failed",
-            }
-        if job.phase == "narrating":
-            return {
-                **base,
-                "phase": "narrating",
-                "capture_elapsed_seconds": round(
-                    (job.ended_monotonic or time.monotonic()) - job.started_monotonic, 3
-                ),
-                "note": "synthesizing and muxing narration; poll recording_status",
-            }
-        if job.phase == "completed":
-            return dict(job.result or {"id": job.id, "phase": "completed"})
-        return {
-            **base,
-            "phase": "failed",
-            "detail": job.detail or "recording failed",
-            "intermediate_path": str(job.intermediate) if job.intermediate.exists() else None,
-            "log_path": str(job.log_path) if job.log_path.exists() else None,
-        }
+        return reporting.phase_summary(job, intermediate_bytes=self._intermediate_size(job))
 
 
 RECORDINGS = RecordingManager()
