@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import encoding, lifecycle, outputs, recording, server, streams, tts
+from seshat import core, encoding, lifecycle, outputs, recording, server, streams, tts
 
 
 EPOCH_MONOTONIC = 100.0
@@ -139,6 +139,12 @@ class RecordingManagerCase(unittest.TestCase):
         sleep = patch.object(server.time, "sleep", lambda _seconds: real_sleep(0.005))
         sleep.start()
         self.addCleanup(sleep.stop)
+        # The recorder is faked here, so whether this host has ffmpeg/wf-recorder
+        # installed must not decide whether the lifecycle tests can run at all.
+        # Tests that assert the binary requirement override this themselves.
+        available = patch.object(core, "command_available", lambda _name: True)
+        available.start()
+        self.addCleanup(available.stop)
         self.manager = server.RecordingManager()
 
     def popen(self, process: FakeProcess):
