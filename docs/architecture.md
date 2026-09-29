@@ -64,9 +64,10 @@ completed ──recording_voiceover──> narrating ──> completed   (failur
 - `RecordingManager` holds one lock, one current take, and a history of takes by
   id — all in process memory, so a server restart forgets every take, completed
   or not. Every mutation is under that lock.
-- Finalization is a worker thread: it re-encodes the intermediate, validates the
-  artifact, ingests the timeline streams, writes the sidecar, then discards the
-  intermediate and the capture log.
+- Finalization is a worker thread: it re-encodes to a private candidate, validates
+  the stream/container contract, fully decodes the video, atomically publishes
+  the artifact, ingests the timeline streams, writes the sidecar, then discards
+  the intermediate and capture log.
 - Ingestion is idempotent by construction: the event list is rebuilt from the
   streams on every read, so `recording_timeline` during a take, finalization, and
   anchor resolution before narration all see a consistent, duplicate-free list.
@@ -79,23 +80,30 @@ completed ──recording_voiceover──> narrating ──> completed   (failur
   the protocol loop returns as a tool error with the specific message.
 - A malformed, oversized or unreadable stream line is counted in the timeline's
   `sources` report and skipped. No stream can destroy a take.
-- A failed capture deletes the artifact and keeps the intermediate and log so the
-  cause is inspectable; a failed finalization keeps the intermediate. An
-  intermediate that cannot be probed says so, and says whether the take was
-  stopped by its own deadline, because that shutdown is the usual reason a
-  recorder's tail is missing.
+- A failed capture deletes the artifact and keeps the intermediate, candidate, and
+  log when present so the cause is inspectable. `SIGKILL` and non-zero recorder
+  exits are failures and never enter finalization.
 - A failed narration leaves the previous artifact untouched: the narrated file is
   written to a `.part` path and validated before `os.replace`.
 
-## Two clocks, one picture
+## Lifecycle facts and one picture
 
-Capture runs on the monotonic wall clock; the published video has its own
-measured extent, and they disagree by construction. Stopping the recorder can
-take seconds of signal escalation that produce no frames, and a take stopped by
-its deadline can lose its tail entirely. So the pipeline reports
-`capture_elapsed_seconds` and `media_duration_seconds` as separate facts, counts
-the events that fall past the picture (`events_beyond_media`), and validates
-every narration anchor — event id or explicit offset — against the playable video
+Three facts, never conflated:
+
+- `capture_elapsed_seconds` is the capture window: recorder launch to the stop
+  request. Encoder discovery and allocation happen before launch and are not
+  capture; signal escalation happens after the request and is not capture either.
+  Ingestion closes on the same instant, so an event published while the recorder
+  is shutting down cannot become an anchor for a picture that already ended.
+- `shutdown_latency_seconds` is the stop request to the observed process exit,
+  reported beside `termination_stage` and the exact `recorder_returncode`.
+- `media_duration_seconds` is the playable picture ffprobe measures.
+
+Capture requests frames continuously (`wf-recorder -D`), so a static tail still
+reaches the stop boundary instead of ending at the last damaged frame. Where the
+two still disagree the pipeline reports the gap instead of hiding it:
+`events_beyond_media` counts ingested events with no picture, and every narration
+anchor — event id or explicit offset — is validated against the playable video
 extent rather than against the clock the events were recorded on. An event that
 exists is not thereby an anchor.
 
