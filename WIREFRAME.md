@@ -122,7 +122,7 @@ source.
 | variable | effect |
 |---|---|
 | `SESHAT_COMMAND` | command argv used for MCP self-registration |
-| `SESHAT_COMPOSITOR` | forces the compositor (`sway` or `hyprland`) when detection is ambiguous |
+| `SESHAT_COMPOSITOR` | forces the compositor (`sway` or `hyprland`) instead of detecting it |
 | `SESHAT_PIPER_MODEL` | default piper voice model path |
 | `XDG_RUNTIME_DIR` | required: runtime root for streams and recordings |
 | `SWAYSOCK`, `HYPRLAND_INSTANCE_SIGNATURE`, `WAYLAND_DISPLAY` | recovered when missing, needed to resolve output geometry and to capture |
