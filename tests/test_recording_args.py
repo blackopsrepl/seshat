@@ -236,6 +236,7 @@ class CaptureArgvTests(unittest.TestCase):
             argv,
             [
                 "wf-recorder",
+                "-D",
                 "-o",
                 "DP-1",
                 "-g",
