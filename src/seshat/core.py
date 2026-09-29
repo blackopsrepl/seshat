@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import glob
 import json
 import os
 import shlex
@@ -110,52 +109,8 @@ def command_argv() -> list[str]:
     return [sys.executable, "-m", "seshat"]
 
 
-def newest_socket(pattern: str) -> str | None:
-    candidates = [Path(path) for path in glob.glob(pattern) if Path(path).is_socket()]
-    if not candidates:
-        return None
-    return str(max(candidates, key=lambda path: path.stat().st_mtime))
-
-
-def ensure_session_environment() -> None:
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
-    if not runtime_dir:
-        candidate = f"/run/user/{os.getuid()}"
-        if Path(candidate).is_dir():
-            runtime_dir = candidate
-            os.environ["XDG_RUNTIME_DIR"] = candidate
-
-    if runtime_dir and not os.environ.get("SWAYSOCK"):
-        socket = newest_socket(f"{runtime_dir}/sway-ipc.{os.getuid()}.*.sock")
-        if socket:
-            os.environ["SWAYSOCK"] = socket
-
-    if runtime_dir and not os.environ.get("WAYLAND_DISPLAY"):
-        displays = sorted(Path(runtime_dir).glob("wayland-*"), key=lambda path: path.stat().st_mtime, reverse=True)
-        for display in displays:
-            if display.is_socket():
-                os.environ["WAYLAND_DISPLAY"] = display.name
-                break
-
-
 def read_json_command(args: list[str], timeout: float = DEFAULT_TIMEOUT) -> Any:
     return json.loads(run_command(args, timeout=timeout).text)
-
-
-def require_session() -> None:
-    ensure_session_environment()
-    missing = [
-        name
-        for name in ("SWAYSOCK", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR")
-        if not os.environ.get(name)
-    ]
-    if missing:
-        raise ToolError(
-            "not running inside a usable Sway session; missing "
-            + ", ".join(missing)
-        )
-    require_binaries(["swaymsg"])
-    read_json_command(["swaymsg", "-t", "get_outputs"])
 
 
 def strict_int(value: Any, name: str) -> int:

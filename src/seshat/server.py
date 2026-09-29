@@ -28,6 +28,7 @@ from .narration import *
 from .outputs import *
 from .recording import *
 from .scenes import *
+from .session import *
 from .specs import *
 from .streams import *
 from .timeline import *

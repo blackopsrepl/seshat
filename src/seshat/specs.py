@@ -35,7 +35,8 @@ def tool_specs() -> list[dict[str, Any]]:
                     "output": {
                         "type": "string",
                         "description": (
-                            "Exact Sway output name; inferred when exactly one output is active."
+                            "Exact output name (Sway or Hyprland); inferred when "
+                            "exactly one output is active."
                         ),
                     },
                     "region": {
