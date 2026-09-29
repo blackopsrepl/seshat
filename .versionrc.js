@@ -44,4 +44,8 @@ module.exports = {
   commitUrlFormat: "https://github.com/blackopsrepl/seshat/commit/{{hash}}",
   compareUrlFormat:
     "https://github.com/blackopsrepl/seshat/compare/{{previousTag}}...{{currentTag}}",
+  // The preset's default issue link is built from host/owner/repository keys this
+  // config does not declare, so a subject carrying `(#3)` rendered as
+  // `undefined/undefined/undefined/issues/3`. Name the URL outright.
+  issueUrlFormat: "https://github.com/blackopsrepl/seshat/issues/{{id}}",
 };
