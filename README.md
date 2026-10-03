@@ -107,6 +107,25 @@ One take may be active at a time. Artifacts are written to
 `$XDG_RUNTIME_DIR/seshat/recordings` (0700, files 0600) and do not survive a
 logout; copy anything you want to keep.
 
+Take is recorded **silent by default**. To capture desktop audio into the
+artifact, ask for it at start:
+
+```
+recording_start(format="mp4", audio="monitor")   # the desktop's own sound
+recording_start(format="mp4", audio="mic")       # the host's default microphone
+```
+
+- `audio="monitor"` records the default output sink's monitor — application and
+  system sound, never the microphone — resolved from `pactl info` and passed to
+  `wf-recorder -a <sink>.monitor`. A host without a resolvable default sink
+  fails with a clear error; `seshat_info.audio` reports what would be captured.
+- `audio="mic"` records PulseAudio's default source (the default input device).
+- `audio="auto"` is `monitor` where a default sink exists, `mic` otherwise.
+- `audio="off"` (default, or null) records no audio.
+- Audio is for `mp4`/`webm`; `gif` cannot carry audio and refuses the argument.
+- Narration added later is an **additional** spoken track on top of captured
+  audio — see *Narrating a take*.
+
 A completed take separates three lifecycle facts: `capture_elapsed_seconds` runs
 from recorder launch to the stop request, `shutdown_latency_seconds` measures how
 long the recorder then took to exit, and `media_duration_seconds` is the playable
@@ -171,11 +190,13 @@ recording_status()        # poll until phase == completed | failed
 
 `recording_voiceover` synthesizes each segment, builds one audio track placed at
 the resolved anchors (with `offset_ms`, optional tempo compression via
-`fit="compress"`, and lead-silence trimming), muxes it over the existing video,
-and — unless `subtitles=false` — burns styled ASS captions. The video is only
+`fit="compress"`, and lead-silence trimming), and muxes it over the existing
+video — on top of the audio a take recorded with `audio=monitor|mic`, as the
+artifact's speech layer when the take was recorded silent — and — unless
+`subtitles=false` — burns styled ASS captions. The video is only
 re-encoded when captions are burned; otherwise it is stream-copied. The result is
 re-validated: exactly one video stream plus exactly one audio stream. A
-narration failure never destroys the take: the silent artifact stays in place
+narration failure never destroys the take: the artifact stays in place
 and the reason lands in `result.narration.error` — for example, an ffmpeg build
 without the `subtitles` filter cannot burn captions. Retry that take with
 `subtitles=false`. To burn captions, start the server with a libass-enabled
@@ -208,6 +229,10 @@ you observed yourself — never in the mere existence of an event.
 
 ## Security notes
 
+- **Audio capture is opt-in and source-resolved.** seshat records sound only
+  when `recording_start` says so, and records the desktop output's monitor —
+  never the microphone — unless you explicitly ask for `mic`. A take never
+  silently starts listening to anything.
 - `edge-tts` sends the narration prose to Microsoft. It is keyless but network
   dependent. Install `piper` and a voice model (`voice`, or
   `SESHAT_PIPER_MODEL`) to keep narration on the host.
@@ -215,6 +240,66 @@ you observed yourself — never in the mere existence of an event.
   nothing visible on screen becomes narration unless the agent says so.
 - Recordings and streams live under `$XDG_RUNTIME_DIR/seshat` with 0700 / 0600
   permissions.
+
+## FAQ
+
+**Why doesn't my recording have any sound?**
+Because you didn't ask for it. Takes are silent by default — `recording_start`
+captures only a picture unless you pass `audio="monitor"` (desktop sound),
+`audio="mic"` (default microphone) or `audio="auto"`. This is deliberate: a
+recorder that silently starts listening to a microphone is a security problem,
+not a convenience. `seshat_info.audio` shows what a take would capture.
+
+**I passed `audio="mic"` and got my microphone, but I wanted the desktop's
+sound.** Which is which?
+`monitor` = what your speakers play (application and system audio, *not* the
+microphone). `mic` = the host's default input device, whatever that is. On a
+host with several microphones, the default one wins; pick input routing in your
+audio mixer (pavucontrol / `wpctl`) if you need a different one. There is one
+exception to know about: if no default *output sink* exists (headless session,
+no audio hardware), `auto` falls back to `mic`.
+
+**Where is my microphone in the recording?**
+Nowhere unless you asked: a take that captured the microphone was started with
+`audio="mic"` or `audio="auto"` on a mic-only host. Desktop audio comes from the
+sink's monitor and never carries the microphone, and vice versa — one `-a`
+source per take.
+
+**GIF refused my recording with "gif cannot carry audio" — why?**
+GIF containers cannot carry any audio stream, so there is no such thing as a
+sound-encoded GIF. Record `format="mp4"` or `"webm"` for takes that need audio;
+keep GIF for silent, looping previews.
+
+**My narration is too loud / too quiet against the desktop audio. Can I mix the
+levels?**
+Not yet: the narrator's voice is synthesized and muxed as its own stream at full
+level, without a mixer. Reduce `voice` overlap by choosing `subtitles=false` and
+narrating fewer, shorter segments, or drop the desktop capture and narrate a
+silent take when the voice is the point.
+
+**Can I get narration *and* desktop audio in the same file?**
+Yes — that is exactly what an audio-captured take narrated later produces.
+Desktop audio is recorded into the artifact by `recording_start(audio=...)`, and
+`recording_voiceover` layers the synthesized voice over it as an additional
+speech stream in the same container. Both are audible when you play the file.
+
+**Why does `seshat_info.audio` show `null` for my sink?**
+`pactl info` answered without a default sink: no audio server is running, or the
+session's user owns none. Recording silently still works. Ask for `audio="mic"`
+only if `default_source` resolves, and otherwise record silent.
+
+**The recording fails with "could not resolve a default audio sink" when I asked
+for `audio="monitor"`.**
+That host has no default output sink to monitor. Record with `audio="mic"`, or
+without audio at all. Setting an output sink (`wpctl`) does not change seshat's
+mind mid-take: it resolves the sink at the moment the take starts; a take that
+already started keeps the source it resolved.
+
+**My take says `audio_included: true` but I hear nothing when I play it.**
+Two normal causes: the desktop was quiet when the take ran (the desktop's sound
+is recorded only if it played during the capture window — seshat does not create
+sound), or the player you tried doesn't handle the container's audio track (MP4
+= AAC, WebM = Opus; both are common, try VLC or mpv).
 
 ## Related
 

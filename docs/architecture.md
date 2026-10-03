@@ -33,6 +33,12 @@ Corollary rules that fall out of the boundary:
 - **A take with no streams still works.** It has no event anchors; narration
   falls back to explicit `at_ms`, or to `recording_scenes`. This is the honest
   consequence of decoupling, and it is why the fallback exists.
+- **The desktop's sound is recorded, never performed.** Audio capture listens to
+  the audio server exactly the way capture listens to the compositor: an
+  opt-in `audio=` mode on `recording_start` resolves one PulseAudio source (the
+  default sink's monitor for the desktop's own sound, the default input for
+  `mic`) and hands it to `wf-recorder -a`. Narration later is a synthesized
+  voice layered on top, never a replacement of the captured track.
 
 ## Layers
 
@@ -43,6 +49,7 @@ Corollary rules that fall out of the boundary:
 | contract | `streams` | the published event format: append, discover, parse, window-filter, merge |
 | session fact | `outputs` | the only thing capture needs from the session: output geometry |
 | capture | `recording`, `encoding` | take model, artifact validation, finalization; encoder selection and every ffmpeg argv |
+| audio | `recording` (via `pactl`) | the only audio-server fact capture needs: which PulseAudio source a take's `audio=` mode resolves to |
 | timeline | `timeline` | recording-relative projection, event ids, media extent, sidecar |
 | narration | `tts`, `narration`, `subtitles`, `scenes` | synthesis, anchor resolution, scheduling, caption layout, burn-in argv |
 | lifecycle | `manager` | the single take owner; ingestion, phase transitions, shutdown |
@@ -106,6 +113,13 @@ two still disagree the pipeline reports the gap instead of hiding it:
 anchor — event id or explicit offset — is validated against the playable video
 extent rather than against the clock the events were recorded on. An event that
 exists is not thereby an anchor.
+
+Audio behaves like the picture in this respect: it is the recorder's own track,
+running the capture window's length into the intermediate, and an audio-less
+host (desktop without a default sink, recorder build without an audio backend)
+fails at the boundary the missing fact sits behind — source resolution before
+launch with a clear `ToolError`, launch with the mode named in the failure —
+rather than publishing a take that quietly has the wrong sound.
 
 ## What an event proves
 

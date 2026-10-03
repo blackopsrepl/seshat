@@ -19,6 +19,7 @@ This file describes what is shipped; it is not a roadmap.
 
 ```
 format: "mp4" | "webm" | "gif"        default mp4
+audio: "auto" | "monitor" | "mic" | "off" | null   default off
 output: "<output name>"               inferred when exactly one output is active
 region: {x, y, width, height}         must be fully contained in the output
 max_duration_seconds: number          default 60 (mp4/webm), 15 (gif); gif capped at 15
@@ -27,6 +28,14 @@ timeline_sources: [path, ...]         default: every *.jsonl in the streams dire
 
 Returns immediately with `phase: "recording"`. Rejects a second concurrent take.
 Requires `wf-recorder`, `ffmpeg`, `ffprobe`.
+
+`audio` captures desktop sound into the artifact (mp4/webm only; gif refuses it
+at start): `monitor` records the default output sink's monitor — the desktop's
+own application and system audio — resolved through `pactl info`; `mic` records
+the host's default PulseAudio source (default input device); `auto` is
+`monitor` where a default sink exists, `mic` otherwise; `off`/null is the
+default silent artifact. A completed take with audio carries exactly one audio
+stream of the container's codec (AAC in MP4, Opus in WebM).
 
 ### recording_status / recording_stop
 
@@ -80,14 +89,18 @@ subtitles: boolean                     default true
 id: "<take id>"                        default the latest take
 ```
 
-Refuses `format=gif`. Requires `phase == "completed"`. Rejects an `event_id` that
-is not in the take timeline **and** an anchor — either kind — that resolves past
-the playable video extent, unknown keys, and non-boolean `subtitles`. Runs
-asynchronously as `phase: "narrating"`. A narration failure returns the take to
-`completed` with the artifact intact and the reason in
-`result.narration.error`. Caption burn-in additionally requires an ffmpeg built
-with libass (the `subtitles` filter); a build without one fails narration
-exactly this way, and the take can be re-narrated with `subtitles=false`.
+Refuses `format=gif` — including a take that recorded with audio — and requires
+`phase == "completed"`. Rejects an `event_id` that is not in the take timeline
+**and** an anchor — either kind — that resolves past the playable video extent,
+unknown keys, and non-boolean `subtitles`. Runs asynchronously as
+`phase: "narrating"`. A narration failure returns the take to `completed` with
+the artifact intact and the reason in `result.narration.error`. Caption burn-in
+additionally requires an ffmpeg built with libass (the `subtitles` filter); a
+build without one fails narration exactly this way, and the take can be
+re-narrated with `subtitles=false`. Narration is a spoken layer on top of
+whatever audio the take already carries: over a silent artifact it is the only
+audio track, over an `audio=monitor|mic` artifact it is the additional voice on
+top of the captured sound.
 
 ### recording_scenes
 
@@ -121,6 +134,12 @@ source.
 - Silent artifact contract: exactly one video stream, no audio —
   MP4 = H.264 (`libx264`, CRF 23), WebM = AV1 (`libsvtav1` preferred, then
   `libaom-av1`), GIF = 12 fps, max 960 px wide, works only with no stream.
+- Audio-capture artifact contract (`audio=monitor|mic`): exactly one video
+  stream **and** exactly one audio stream — MP4 = AAC 128k, WebM = Opus 96k,
+  both 48 kHz stereo — captured by `wf-recorder -a [source]` into the silent
+  intermediate and re-encoded beside the picture during finalization, with the
+  artifact validated for exactly that shape. Narration later re-adds its own
+  speech-encoded stream per the narrated contract below.
 - Narrated artifact contract: exactly one video stream **and** exactly one audio
   stream — MP4 = AAC 128k, WebM = Opus 96k, both 48 kHz stereo. The middle of the
   take is written to `<id>.narrated.<fmt>.part` and moved into place only after

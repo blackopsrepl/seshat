@@ -17,9 +17,17 @@ Guidance for coding agents working in this repository.
   missing compositor client is a `ToolError`. Capture assumes wlr-screencopy
   (`wf-recorder`), so another wlr-screencopy-compatible compositor needs an
   output adaptor rather than a new capture backend.
-- The silent recording contract is frozen: silent takes carry no audio, the
-  artifact has exactly one video stream (H.264 MP4 by default, AV1 WebM, or
-  GIF), and `validate_recording_artifact` keeps rejecting unexpected audio.
+- The audio contract is conditional silence: a take captures **no** audio unless
+  `recording_start` says `audio=auto|monitor|mic` (`off` is the default). A take
+  that asked for a track gets exactly one audio stream of the expected codec
+  (AAC in MP4, Opus in WebM), captured from the host's PulseAudio default sink
+  monitor (`monitor`, and `auto` resolving there) or the default source
+  (`mic`); `validate_recording_artifact` rejects audio on silent takes and the
+  wrong codec or stream count on audio ones. A monitor source that cannot be
+  resolved from `pactl info` is a clear `ToolError`, and GIF refuses every audio
+  mode at job construction — `recording_voiceover` still refuses `format=gif`.
+  Narration added later is one additional spoken segment layer over that
+  captured track, never a replacement of it.
 - Only one take may be active per process; `RecordingManager` is the single
   owner. `recording_start` must reject a second concurrent take.
 - GIF cannot carry audio; `recording_voiceover` refuses `format=gif`.

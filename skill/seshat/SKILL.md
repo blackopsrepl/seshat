@@ -43,6 +43,16 @@ recording_timeline()        # read before writing a single word of prose
 - One take at a time per process; a second `recording_start` is an error.
 - The watchdog stops the take at `max_duration_seconds` (default 60, gif 15) and
   reports `auto_stopped: true`, so a forgotten take cannot run forever.
+- **Desktop audio is opt-in**: pass `audio="monitor"` to record the desktop's
+  own sound (application/system audio from the default sink), or `audio="mic"`
+  for the host's default microphone. The default is silence. `audio="monitor"`
+  resolves via `pactl info` (`Default Sink` + `.monitor`); an unresolvable
+  default sink is a clear error. `seshat_info.audio` reports what would be
+  captured. Do not assume recording captures audio implicitly: `wf-recorder`'s
+  own bare `-a` records the *microphone* (PulseAudio default source), which is
+  exactly why seshat resolves `<default-sink>.monitor` instead. A take can start
+  with desktop audio and still get narration later — the voice lands as an
+  additional stream on top of the captured track.
 - Artifacts land in `$XDG_RUNTIME_DIR/seshat/recordings` and do not survive
   logout. Copy out anything you need to keep.
 
@@ -66,7 +76,8 @@ recording_status()   # poll until completed | failed
   video; `false` stream-copies it.
 - A narration failure returns the take to `completed` with the artifact intact
   and the reason in `result.narration.error` — the recording is never lost.
-- GIF cannot carry audio: `recording_voiceover` refuses `format=gif` outright.
+- GIF cannot carry audio: `recording_voiceover` refuses `format=gif` outright,
+  and `recording_start(format="gif", audio=...)` is refused at start.
 
 ## What the anchors guarantee, and what they do not
 
@@ -115,6 +126,12 @@ shows; use the event only for its timing.
   narrate and collect the artifact within one server session.
 - **`piper is not installed` / no TTS engine.** Install `piper` and a voice
   model, or accept that `edge-tts` sends the narration prose to Microsoft.
+- **`could not resolve a default audio sink from pactl info`.** `audio="monitor"`
+  and `audio="auto"` need a default sink; a headless or audio-less session has
+  none. Use `audio="mic"` or record silent.
+- **`wf-recorder exited during startup ... (the take asked for audio=...)`.**
+  This binary build has no audio support or no reachable audio server: retry
+  without the `audio` argument and read the log tail for the backend error.
 - **Slow finalization.** WebM is AV1-encoded; poll `recording_status` rather than
   assuming a timeout means failure.
 
