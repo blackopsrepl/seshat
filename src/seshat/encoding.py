@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import core
+from . import recording
 
 if TYPE_CHECKING:
     from .recording import RecordingJob
@@ -56,6 +57,24 @@ def recording_capture_argv(job: RecordingJob) -> list[str]:
             "-y",
         ]
     )
+    argv.extend(capture_audio_argv(job))
+    return argv
+
+
+def capture_audio_argv(job: RecordingJob) -> list[str]:
+    """The trailing ``-a [DEVICE]`` when a take asked for an audio track.
+
+    ``-a`` with a device records the PulseAudio source named by ``job.source``,
+    which the host resolved beforehand to the default sink's monitor (desktop
+    sound) or to nothing, meaning the host's default source (a microphone).
+    A `wf-recorder` built without audio support exits with code 1 on startup;
+    that surfaces as the standard launch failure with the recorder's log tail.
+    """
+    if not recording.wants_audio(job.audio):
+        return []
+    argv = ["-a"]
+    if job.audio_source is not None:
+        argv.append(str(job.audio_source))
     return argv
 
 
@@ -90,7 +109,20 @@ def av1_encoder_args(encoder: str) -> list[str]:
     return ["-crf", "30", "-cpu-used", "6", "-row-mt", "1", "-tiles", "2x2"]
 
 
-def recording_webm_argv(job: RecordingJob, output_path: Path | None = None) -> list[str]:
+def sound_passthrough_argv(fmt: str) -> list[str]:
+    """Map the capture's one audio stream through finalization, encoded for `fmt`.
+
+    A capture that recorded sound (``audio=monitor``/``mic``) re-encodes that
+    track beside the picture here; a silent capture keeps ``-an``. The output
+    codec matches the one narration later re-adds, so both shapes satisfy the
+    same artifact contract.
+    """
+    return ["-map", "0:v:0", "-map", "0:a:0", *audio_encode_args(fmt)]
+
+
+def recording_webm_argv(
+    job, output_path: Path | None = None
+) -> list[str]:
     filters = [
         f"fps={RECORDING_VIDEO_FPS}",
         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -105,7 +137,6 @@ def recording_webm_argv(job: RecordingJob, output_path: Path | None = None) -> l
         "-y",
         "-i",
         str(job.intermediate),
-        "-an",
         "-sn",
         "-dn",
         "-map_metadata",
@@ -116,6 +147,10 @@ def recording_webm_argv(job: RecordingJob, output_path: Path | None = None) -> l
         job.encoder,
     ]
     argv.extend(av1_encoder_args(job.encoder))
+    if wants_recording_sound(job):
+        argv.extend(sound_passthrough_argv("webm"))
+    else:
+        argv.append("-an")
     argv.extend(
         [
             "-force_key_frames",
@@ -128,7 +163,9 @@ def recording_webm_argv(job: RecordingJob, output_path: Path | None = None) -> l
     return argv
 
 
-def recording_mp4_argv(job: RecordingJob, output_path: Path | None = None) -> list[str]:
+def recording_mp4_argv(
+    job, output_path: Path | None = None
+) -> list[str]:
     filters = [
         f"fps={RECORDING_VIDEO_FPS}",
         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -143,7 +180,6 @@ def recording_mp4_argv(job: RecordingJob, output_path: Path | None = None) -> li
         "-y",
         "-i",
         str(job.intermediate),
-        "-an",
         "-sn",
         "-dn",
         "-map_metadata",
@@ -157,9 +193,19 @@ def recording_mp4_argv(job: RecordingJob, output_path: Path | None = None) -> li
         "-preset",
         RECORDING_MP4_PRESET,
     ]
+    if wants_recording_sound(job):
+        argv.extend(sound_passthrough_argv("mp4"))
+    else:
+        argv.append("-an")
     argv.extend(container_mux_flags("mp4"))
     argv.extend(["-f", "mp4", str(output_path or job.artifact)])
     return argv
+
+
+def wants_recording_sound(job) -> bool:
+    from . import recording as _r
+
+    return _r.wants_audio(getattr(job, "audio", "off"))
 
 
 def recording_gif_argv(
