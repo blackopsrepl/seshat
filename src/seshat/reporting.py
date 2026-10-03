@@ -30,7 +30,7 @@ def phase_summary(job: recording.RecordingJob, *, intermediate_bytes: int) -> di
         "format": job.fmt,
         "output": job.output,
         "region": job.region,
-        "audio_included": bool(job.result and job.result.get("audio_included")),
+        "audio_included": _audio_included(job),
         "cursor_included": True,
         "termination_stage": job.termination_stage,
         "recorder_returncode": job.recorder_returncode,
@@ -79,6 +79,19 @@ def phase_summary(job: recording.RecordingJob, *, intermediate_bytes: int) -> di
 
 def _now() -> float:
     return time.monotonic()
+
+
+def _audio_included(job: recording.RecordingJob) -> bool:
+    """Whether the artifact carries (or is capturing) a sound track.
+
+    During capture this is the take's own ``audio`` argument — the caller sees
+    the fact while the take runs. Once a result exists it is whatever that
+    result established (finalization re-validates the artifact; narration
+    replaces the track), so the two can never disagree.
+    """
+    if job.result is not None and "audio_included" in job.result:
+        return bool(job.result["audio_included"])
+    return recording.wants_audio(job.audio)
 
 
 def _capture_elapsed(job: recording.RecordingJob) -> float:

@@ -112,6 +112,30 @@ def exit_process_on_signal(process: FakeProcess):
     return patch.object(lifecycle.os, "killpg", side_effect=fake_killpg)
 
 
+PACTL_INFO = (
+    "Server Name: PulseAudio (on PipeWire 1.4.6)\n"
+    "Default Sink: alsa_output.pci-0000_00_1f.3.analog-stereo\n"
+    "Default Source: alsa_input.usb-PreSonus_Studio_24c-00.analog-stereo\n"
+)
+
+_real_run = core.run_command
+
+
+def _routable_pactl(stdout: str = PACTL_INFO):
+    """Route `pactl` probes to a fixture; every other command to the real runner.
+
+    RecordingManagerCase fakes the recorder process, so a take that asks for
+    audio still needs a resolvable audio server in `setUp`-driven tests.
+    """
+
+    def router(args, **kwargs):
+        if args and args[0] == "pactl":
+            return core.CommandResult(stdout=stdout.encode("utf-8"), stderr=b"", returncode=0)
+        return _real_run(args, **kwargs)
+
+    return router
+
+
 class RecordingManagerCase(unittest.TestCase):
     """Fixture for tests that drive a real RecordingManager with a fake recorder.
 
@@ -159,7 +183,8 @@ class RecordingManagerCase(unittest.TestCase):
         self, arguments: dict | None = None, process: FakeProcess | None = None
     ) -> FakeProcess:
         process = process or FakeProcess()
-        with self.popen(process):
+        pactl = patch.object(core, "run_command", side_effect=_routable_pactl())
+        with self.popen(process), pactl:
             summary = self.manager.start(arguments or {"max_duration_seconds": 30})
         self.assertEqual(summary["phase"], "recording")
         return process

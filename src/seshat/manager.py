@@ -19,6 +19,24 @@ from . import (
     tts,
 )
 
+from .recording import wants_audio
+
+
+def _audio_start_hint(job: recording.RecordingJob) -> str:
+    """Name the audio mode when a take that asked for audio died at launch.
+
+    A recorder without audio support (or without a reachable PulseAudio/PipeWire
+    session) exits with code 1 exactly when ``-a`` was passed; the log tail is
+    the concrete evidence, this line turns it into an actionable cause.
+    """
+    if not wants_audio(job.audio):
+        return ""
+    return (
+        f' (the take asked for audio="{job.audio}": a wf-recorder without audio support '
+        "or without a reachable audio session exits just like this; retry without the "
+        "audio argument to confirm, and read the log for the audio backend error)"
+    )
+
 
 class RecordingManager:
     """Owns the single capture/finalization lifecycle for this server process."""
@@ -116,6 +134,7 @@ class RecordingManager:
                 raise core.ToolError(
                     f"wf-recorder exited during startup (code {new_job.process.returncode})"
                     + (f": {detail}" if detail else "")
+                    + _audio_start_hint(new_job)
                 )
             self._jobs[new_job.id] = new_job
             self._job = new_job
@@ -398,7 +417,7 @@ class RecordingManager:
             "termination_stage": job.termination_stage,
             "recorder_returncode": job.recorder_returncode,
             "shutdown_latency_seconds": shutdown_latency,
-            "audio_included": False,
+            "audio_included": wants_audio(job.audio),
             "cursor_included": True,
             "auto_stopped": job.auto_stopped,
             "timeline_path": str(timeline_path) if timeline_path is not None else None,
