@@ -61,6 +61,21 @@ def tool_specs() -> list[dict[str, Any]]:
                             "12 fps, 960 px maximum width."
                         ),
                     },
+                    "audio": {
+                        "type": "string",
+                        "enum": ["auto", "monitor", "mic", "off", None],
+                        "default": "off",
+                        "description": (
+                            "Desktop audio to capture alongside the picture. Defaults to "
+                            "off: the artifact stays silent unless you ask for a track. "
+                            "\"monitor\" records the desktop's default output (application "
+                            "and system sound); \"mic\" records the host's default "
+                            "microphone input; \"auto\" is monitor when a default sink is "
+                            "resolvable and mic otherwise. Ignored for gif (GIF cannot "
+                            "carry audio). Capturing with a narration added later puts "
+                            "speech on top of this track."
+                        ),
+                    },
                     "max_duration_seconds": {
                         "type": "number",
                         "exclusiveMinimum": 0,

@@ -53,6 +53,7 @@ def tool_seshat_info(_: dict[str, Any]) -> list[dict[str, str]]:
         "session": session_report,
         "outputs": outputs_report,
         "outputs_error": outputs_error,
+        "audio": recording.audio_defaults_report(),
         "tts": {
             "engine_preference": list(tts.NARRATION_ENGINE_PREFERENCE),
             "engines": list(tts.NARRATION_ENGINES),
