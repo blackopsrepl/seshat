@@ -60,12 +60,17 @@ class ProtocolTests(unittest.TestCase):
         specs = {tool["name"]: tool for tool in response["result"]["tools"]}
         for name, spec in specs.items():
             self.assertIs(spec["inputSchema"].get("additionalProperties"), False, name)
-        for name in ("recording_start", "recording_status", "recording_stop"):
+        # Silent stays the default contract: no live take gains audio implicitly.
+        # The opt-in audio surface only exists where the user asked for it.
+        for name in ("recording_status", "recording_stop"):
             self.assertNotIn("audio", json.dumps(specs[name]), name)
 
         start_schema = specs["recording_start"]["inputSchema"]
         self.assertEqual(start_schema["properties"]["format"]["enum"], ["mp4", "webm", "gif"])
         self.assertEqual(start_schema["properties"]["format"]["default"], "mp4")
+        audio_schema = start_schema["properties"]["audio"]
+        self.assertEqual(audio_schema["enum"], ["auto", "monitor", "mic", "off", None])
+        self.assertEqual(audio_schema["default"], "off")
         region = start_schema["properties"]["region"]
         self.assertEqual(region["required"], ["x", "y", "width", "height"])
         self.assertEqual(start_schema["properties"]["timeline_sources"]["type"], ["array", "null"])
