@@ -97,10 +97,13 @@ unknown keys, and non-boolean `subtitles`. Runs asynchronously as
 the artifact intact and the reason in `result.narration.error`. Caption burn-in
 additionally requires an ffmpeg built with libass (the `subtitles` filter); a
 build without one fails narration exactly this way, and the take can be
-re-narrated with `subtitles=false`. Narration is a spoken layer on top of
-whatever audio the take already carries: over a silent artifact it is the only
-audio track, over an `audio=monitor|mic` artifact it is the additional voice on
-top of the captured sound.
+re-narrated with `subtitles=false`. Narration replaces the artifact's single
+audio stream with a mix of whatever the take already carries: over a silent
+artifact the mixed stream is the voice alone, over an `audio=monitor|mic`
+artifact the captured desktop sound and the synthesized voice are audible
+together in that one stream. `seshat_info.audio` reports `default_sink`,
+`default_source` and `monitor_source` (what `audio="monitor"` resolves to), or
+an `error` field on a host without a usable audio server.
 
 ### recording_scenes
 

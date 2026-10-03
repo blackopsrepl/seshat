@@ -123,8 +123,8 @@ recording_start(format="mp4", audio="mic")       # the host's default microphone
 - `audio="auto"` is `monitor` where a default sink exists, `mic` otherwise.
 - `audio="off"` (default, or null) records no audio.
 - Audio is for `mp4`/`webm`; `gif` cannot carry audio and refuses the argument.
-- Narration added later is an **additional** spoken track on top of captured
-  audio — see *Narrating a take*.
+- Narration added later blends the synthesized voice with the captured sound in
+  the artifact's single audio stream — see *Narrating a take*.
 
 A completed take separates three lifecycle facts: `capture_elapsed_seconds` runs
 from recorder launch to the stop request, `shutdown_latency_seconds` measures how
@@ -190,10 +190,11 @@ recording_status()        # poll until phase == completed | failed
 
 `recording_voiceover` synthesizes each segment, builds one audio track placed at
 the resolved anchors (with `offset_ms`, optional tempo compression via
-`fit="compress"`, and lead-silence trimming), and muxes it over the existing
-video — on top of the audio a take recorded with `audio=monitor|mic`, as the
-artifact's speech layer when the take was recorded silent — and — unless
-`subtitles=false` — burns styled ASS captions. The video is only
+`fit="compress"`, and lead-silence trimming), and muxes it with the audio the
+take already carries: over a take recorded with `audio=monitor|mic`, the
+captured desktop sound and the synthesized voice are mixed into the artifact's
+single audio stream; over a silent take, that stream is the voice alone. Unless
+`subtitles=false` — styled ASS captions are also burned. The video is only
 re-encoded when captions are burned; otherwise it is stream-copied. The result is
 re-validated: exactly one video stream plus exactly one audio stream. A
 narration failure never destroys the take: the artifact stays in place
@@ -280,8 +281,10 @@ silent take when the voice is the point.
 **Can I get narration *and* desktop audio in the same file?**
 Yes — that is exactly what an audio-captured take narrated later produces.
 Desktop audio is recorded into the artifact by `recording_start(audio=...)`, and
-`recording_voiceover` layers the synthesized voice over it as an additional
-speech stream in the same container. Both are audible when you play the file.
+`recording_voiceover` layers the synthesized voice over it, mixing both into the
+artifact's single audio stream. Both are audible when you play the file. The
+captured track and the voice are not separate selectable tracks in the file —
+that one stream is their mix.
 
 **Why does `seshat_info.audio` show `null` for my sink?**
 `pactl info` answered without a default sink: no audio server is running, or the
