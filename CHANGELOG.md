@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.4](https://github.com/blackopsrepl/seshat/compare/v0.1.3...v0.1.4) (2026-10-03)
+
+
+### Features
+
+* **encoding:** carry the capture's own audio track through finalization f0df194
+* **manager:** report audio_included from the take, not as a constant 7a37c81
+* **recording:** resolve an opt-in desktop-audio source per take b02d7c3
+* **specs:** expose the audio argument and the host's audio defaults 5877a2e
+
+
+### Documentation
+
+* document the opt-in desktop-audio contract end to end a38a07f
+
 ## [0.1.3](https://github.com/blackopsrepl/seshat/compare/v0.1.2...v0.1.3) (2026-09-29)
 
 
