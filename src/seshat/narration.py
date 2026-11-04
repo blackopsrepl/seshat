@@ -268,15 +268,30 @@ def narration_track_argv(
     clips: dict[int, tts.TtsClip],
     schedule: NarrationSchedule,
     out_path: Path,
+    bed_path: Path | None = None,
 ) -> list[str]:
+    """Build the narration track: every clip on a silent carrier, and — when the
+    take captured sound — the captured desktop track mixed underneath, ducked
+    while the voice speaks.
+
+    The bed enters this one audio pipeline instead of the later mux so the mix
+    is a single amix decision and the deliverable never loses it: the mux maps
+    only this track's audio, which already carries both voices.
+    """
     argv = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y"]
     for segment, _ in anchored:
         argv.extend(["-i", str(clips[segment.index].path)])
+    bed_index = len(anchored)
+    if bed_path is not None:
+        argv.extend(["-i", str(bed_path)])
+    total_seconds = schedule.total_ms / 1000.0
     parts = [
         "anullsrc=channel_layout=stereo:sample_rate="
-        f"{tts.NARRATION_SAMPLE_RATE}:duration={schedule.total_ms / 1000.0:.3f}[bed]"
+        f"{tts.NARRATION_SAMPLE_RATE}:duration={total_seconds:.3f}[silence]",
+        "anullsrc=channel_layout=stereo:sample_rate="
+        f"{tts.NARRATION_SAMPLE_RATE}:duration={total_seconds:.3f}[pad]",
     ]
-    labels = ["[bed]"]
+    labels = ["[silence]"]
     for position, item in enumerate(schedule.segments):
         filters: list[str] = []
         if item.lead_silence_ms > 0:
@@ -292,8 +307,25 @@ def narration_track_argv(
         parts.append(f"[{position}:a]" + ",".join(filters) + label)
         labels.append(label)
     parts.append(
-        "".join(labels) + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0[aout]"
+        "".join(labels)
+        + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0[voice]"
     )
+    if bed_path is None:
+        # The pads are what hold the track to the schedule's full length.
+        parts.append("[voice][pad]amix=inputs=2:normalize=0:dropout_transition=0[aout]")
+    else:
+        parts.append(
+            f"[{bed_index}:a]aresample={tts.NARRATION_SAMPLE_RATE}"
+            ",aformat=channel_layouts=stereo[bedsrc]"
+        )
+        parts.append("[voice]asplit=2[vduck][vmix]")
+        parts.append(
+            f"[bedsrc][vduck]sidechaincompress=threshold={tts.NARRATION_DUCK_THRESHOLD:g}"
+            f":ratio={tts.NARRATION_DUCK_RATIO:g}"
+            f":attack={tts.NARRATION_DUCK_ATTACK_MS:g}"
+            f":release={tts.NARRATION_DUCK_RELEASE_MS:g}[ducked]"
+        )
+        parts.append("[vmix][ducked][pad]amix=inputs=3:normalize=0:dropout_transition=0[aout]")
     argv.extend(
         [
             "-filter_complex",
@@ -301,7 +333,7 @@ def narration_track_argv(
             "-map",
             "[aout]",
             "-t",
-            f"{schedule.total_ms / 1000.0:.3f}",
+            f"{total_seconds:.3f}",
             "-ac",
             "2",
             "-ar",
@@ -331,10 +363,14 @@ def perform_narration(
             out_path = workdir / f"segment-{segment.index:03d}{suffix}"
             clips[segment.index] = engine.synthesize(segment.text, request.voice, out_path)
         schedule = schedule_narration(anchored, clips, duration_ms, request)
+        extend_seconds = max(0.0, (schedule.total_ms - duration_ms) / 1000.0)
+        # A take that captured sound mixes its own track under the voice, ducked
+        # while the voice speaks; a silent master keeps the track voice-only.
+        bed_path = job.artifact if recording.wants_audio(job.audio) else None
         segment_text = {segment.index: segment.text for segment, _ in anchored}
         track_path = workdir / "narration.wav"
         core.run_command(
-            narration_track_argv(anchored, clips, schedule, track_path),
+            narration_track_argv(anchored, clips, schedule, track_path, bed_path),
             timeout=tts.NARRATION_BUILD_TIMEOUT_SECONDS,
         )
         temp_path = job.directory / f"{job.id}.narrated.{job.fmt}.part"
@@ -350,9 +386,16 @@ def perform_narration(
             ]
             document = subtitles.build_ass_document(entries, job.width, job.height)
             subtitle_path = subtitles.write_subtitle_file(workdir, document)
-            subtitle_filter = subtitles.video_filter(subtitle_path)
+            pad_prefix = (
+                f"tpad=stop_mode=clone:stop_duration={extend_seconds:.3f},"
+                if extend_seconds > 0
+                else ""
+            )
+            subtitle_filter = subtitles.video_filter(subtitle_path, pad_prefix)
         core.run_command(
-            encoding.narration_mux_argv(job, track_path, temp_path, subtitle_filter),
+            encoding.narration_mux_argv(
+                job, track_path, temp_path, subtitle_filter, extend_seconds
+            ),
             timeout=tts.NARRATION_BUILD_TIMEOUT_SECONDS,
         )
         try:
@@ -368,6 +411,7 @@ def perform_narration(
             "offset_ms": request.offset_ms,
             "fit": request.fit,
             "subtitles": request.subtitles,
+            "extended_ms": round(extend_seconds * 1000.0, 3),
             "segment_count": len(schedule.segments),
             "total_duration_ms": round(schedule.total_ms, 3),
             "segments": [

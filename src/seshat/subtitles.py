@@ -102,6 +102,10 @@ def escape_filter_path(path: Path) -> str:
     )
 
 
-def video_filter(subtitle_path: Path) -> str:
-    """Build the ``subtitles`` filtergraph that burns the captions into ``[v]``."""
-    return f"[0:v]subtitles=filename='{escape_filter_path(subtitle_path)}'[v]"
+def video_filter(subtitle_path: Path, prefix: str = "") -> str:
+    """Build the ``subtitles`` filtergraph that burns the captions into ``[v]``.
+
+    ``prefix`` puts video filters ahead of the burn-in, e.g. a ``tpad`` that
+    extends the picture to the narration's length.
+    """
+    return f"[0:v]{prefix}subtitles=filename='{escape_filter_path(subtitle_path)}'[v]"

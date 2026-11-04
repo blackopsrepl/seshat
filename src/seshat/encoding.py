@@ -266,9 +266,22 @@ def container_mux_flags(fmt: str) -> list[str]:
 
 
 def narration_mux_argv(
-    job: RecordingJob, track: Path, out_path: Path, subtitle_filter: str | None = None
+    job: RecordingJob,
+    track: Path,
+    out_path: Path,
+    subtitle_filter: str | None = None,
+    extend_seconds: float = 0.0,
 ) -> list[str]:
-    """Mux narration into the recording's container, optionally burning captions."""
+    """Mux narration into the recording's container, optionally burning captions.
+
+    The track carries the whole audio mix (voice plus the ducked captured bed),
+    so the master's own audio is not mapped again — mapping it too would double
+    or lose the bed. When the narration outlasts the picture, the video is
+    extended with cloned frames to the scheduled length; a stream copy is only
+    sound when there is nothing to extend and no burn-in to apply. The caller
+    composes the burn-in graph (``subtitles.video_filter`` accepts a tpad
+    prefix), so the filter here arrives intact.
+    """
     argv = [
         "ffmpeg",
         "-nostdin",
@@ -283,13 +296,13 @@ def narration_mux_argv(
     ]
     if subtitle_filter:
         argv.extend(["-filter_complex", subtitle_filter, "-map", "[v]"])
-    else:
-        argv.extend(["-map", "0:v:0"])
-    argv.extend(["-map", "1:a:0"])
-    if subtitle_filter:
+        argv.extend(video_encode_args(job.fmt, job.encoder))
+    elif extend_seconds > 0:
+        argv.extend(["-map", "0:v:0", "-vf", f"tpad=stop_mode=clone:stop_duration={extend_seconds:.3f}"])
         argv.extend(video_encode_args(job.fmt, job.encoder))
     else:
-        argv.extend(["-c:v", "copy"])
+        argv.extend(["-map", "0:v:0", "-c:v", "copy"])
+    argv.extend(["-map", "1:a:0"])
     argv.extend(audio_encode_args(job.fmt))
     argv.extend(container_mux_flags(job.fmt))
     argv.extend(["-map_metadata", "-1", "-f", job.fmt, str(out_path)])
