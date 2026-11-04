@@ -9,10 +9,27 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from seshat import server
+from seshat import manager as manager_manager, server
 
 
 class ProtocolTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The suite's global RECORDINGS rehydrated the real store at import;
+        # protocol-level tests must see a fresh manager over a private store.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = patch.dict(
+            os.environ,
+            {"XDG_RUNTIME_DIR": tmp.name, "XDG_STATE_HOME": str(Path(tmp.name) / "state")},
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        recordings = patch.object(
+            manager_manager, "RECORDINGS", manager_manager.RecordingManager()
+        )
+        recordings.start()
+        self.addCleanup(recordings.stop)
+
     def test_initialize_response_names_server(self) -> None:
         response = server.handle_message(
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}

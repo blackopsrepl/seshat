@@ -5,11 +5,12 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, outputs, session, server
+from seshat import core, manager as manager_manager, outputs, session, server
 
 from support import publish, single_output
 
@@ -18,9 +19,19 @@ class SeshatInfoTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        env = patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp.name})
+        # The suite's global RECORDINGS rehydrated the real store at import;
+        # every test here must see a fresh manager over a private store.
+        env = patch.dict(
+            os.environ,
+            {"XDG_RUNTIME_DIR": self.tmp.name, "XDG_STATE_HOME": str(Path(self.tmp.name) / "state")},
+        )
         env.start()
         self.addCleanup(env.stop)
+        self.recordings = patch.object(
+            manager_manager, "RECORDINGS", manager_manager.RecordingManager()
+        )
+        self.recordings.start()
+        self.addCleanup(self.recordings.stop)
 
     def info(self) -> dict:
         return json.loads(server.TOOLS["seshat_info"]({})[0]["text"])
