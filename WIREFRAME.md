@@ -83,13 +83,19 @@ next to the artifact as `<id>.timeline.json` on completion.
 ### recording_voiceover
 
 ```
-segments: [{anchor: {event_id: n} | {at_ms: n}, text: "..."}]   required
-engine: "auto" | "edge" | "piper"      default auto (edge preferred, then piper)
-voice: "<engine voice>"                optional
+segments: [{anchor: {event_id | at_ms | match}, text: "..."}]  required
+  match: {tool?, payload subset?, nth?}  resolves to exactly one real event
+engine: "auto" | "edge" | "piper"      default auto (offline piper only)
+voice: "<engine voice>"                optional; result reports the resolved one
+rate/volume/pitch: string              edge character, defaults "+0%"/"+0%"/"+0Hz"
+length_scale: number 0.1..3            piper pace, default 1.0
 offset_ms: number                      default 0, shifts every resolved anchor
 fit: "natural" | "compress"            default natural
 tail_ms: number                        default 300, max 2000
-subtitles: boolean                     default true
+subtitles: boolean                     default true (SRT/VTT sidecars either way)
+position: "bottom" | "top" | "auto"    default bottom
+variant: "<name>"                      renders <id>.<variant>.<fmt> from the master
+dry_run: boolean                       default false; answers with the schedule
 id: "<take id>"                        default the latest take
 ```
 
@@ -109,7 +115,14 @@ reports `path` (the current deliverable) and `master_path`. A take recorded with
 voice (sidechaincompress) and mixes both into the deliverable's single audio
 stream; over a silent master the stream is the voice alone. A schedule that
 runs past the master's extent extends the picture with cloned frames (`tpad`),
-reported as `narration.extended_ms`. `seshat_info.audio` reports `default_sink`,
+reported as `narration.extended_ms`. Captions are split into sentence-shaped
+phrases timed by the engine's cues (proportional by characters otherwise) and
+written as `<deliverable>.srt`/`.vtt` beside every render; `position="auto"`
+lifts a caption to the top when the events in its window acted in the bottom
+third of the picture. The whole mix is normalized to −16 LUFS. `dry_run=true`
+answers synchronously with the schedule (per-segment durations, overruns) and
+publishes nothing. The narration result reports `engine`, resolved `voice`,
+`network` and `character`. `seshat_info.audio` reports `default_sink`,
 `default_source` and `monitor_source` (what `audio="monitor"` resolves to), or
 an `error` field on a host without a usable audio server.
 

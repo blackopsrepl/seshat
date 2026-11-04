@@ -27,7 +27,9 @@ Corollary rules that fall out of the boundary:
 - **The emitter decides what is safe to publish; seshat decides when and how it
   is narrated.** Per-tool payload curation (which argument keys are meaningful
   and non-sensitive) lives with the server that knows its own arguments. seshat
-  passes payloads through verbatim.
+  passes payloads through verbatim — and reads them back for placement and
+  content anchors: an event's `payload` may position its caption away from the
+  action, or match an anchor by content, but never writes a word of narration.
 - **There is one way into a timeline: ingestion.** seshat contributes no events
   of its own, because none of its own actions are part of a demonstration.
 - **A take with no streams still works.** It has no event anchors; narration
@@ -52,7 +54,7 @@ Corollary rules that fall out of the boundary:
 | capture | `recording`, `encoding` | take model, artifact validation, finalization; encoder selection and every ffmpeg argv |
 | audio | `recording` (via `pactl`) | the only audio-server fact capture needs: which PulseAudio source a take's `audio=` mode resolves to |
 | timeline | `timeline` | recording-relative projection, event ids, media extent, sidecar |
-| narration | `tts`, `narration`, `subtitles`, `scenes` | synthesis, anchor resolution, scheduling, caption layout, burn-in argv |
+| narration | `tts`, `narration`, `scheduling`, `subtitles`, `scenes` | synthesis, anchor resolution, scheduling, phrase captions, soft sidecars, burn-in argv |
 | store | `store`, `takes` | the durable take store: adoption, manifests, rehydration, list/discard/export |
 | lifecycle | `manager`, `workers` | the single take owner; ingestion, phase transitions, worker threads, shutdown |
 | surface | `tools`, `specs`, `server` | tool wrappers, JSON schemas, MCP loop, CLI facade |

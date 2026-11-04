@@ -68,12 +68,30 @@ invents nothing. Anchor every segment to an event id that `recording_timeline`
 actually returned, or to an explicit `at_ms`:
 
 ```
+# Plan first: dry_run answers synchronously with per-segment durations and
+# overruns, so the demonstration can be paced to the script before recording.
+recording_voiceover(segments=[...], dry_run=true)
+
 recording_voiceover(segments=[
-  {"anchor": {"event_id": 3}, "text": "..."},
-  {"anchor": {"at_ms": 12000}, "text": "..."}
-], fit="compress", subtitles=True)
-recording_status()   # poll until completed | failed
+  {"anchor": {"event_id": 3}, "text": "..."},        # a real event id
+  {"anchor": {"at_ms": 12000}, "text": "..."},       # an explicit offset
+  {"anchor": {"match": {"tool": "write", "nth": 1}}, "text": "..."}
+], fit="compress", subtitles=True, position="auto")
+recording_status(wait_seconds=58)
 ```
+
+- Anchors may be an event id, an explicit `at_ms`, or a content match
+  (`{"tool", "payload subset", "nth"}`): exactly one real event, so a script
+  survives a re-record. A match that finds nothing is refused, not invented.
+- Captions are phrase-shaped and cue-timed; `<deliverable>.srt` and `.vtt` are
+  written beside every render even when burn-in is off or unavailable.
+  `position="auto"` keeps captions off the bottom third when the events acted
+  there.
+- The voice is tunable: `rate`/`volume`/`pitch` (edge) or `length_scale`
+  (piper); the whole mix is normalized to −16 LUFS. The result reports
+  `engine`, resolved `voice`, `network` and `character`.
+- `variant="it"` renders `<id>.it.<fmt>` from the same master — narration in
+  several languages from one take.
 
 - Anchors are always the master's picture, so the same script can be narrated
   again after editing: the deliverable lands at `<id>.narrated.<fmt>` and the

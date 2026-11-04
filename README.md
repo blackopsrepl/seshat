@@ -210,27 +210,45 @@ the resolved anchors (with `offset_ms`, optional tempo compression via
 `fit="compress"`, and lead-silence trimming), mixes it with whatever audio the
 take already carries — over a take recorded with `audio=monitor|mic`, the
 captured desktop sound is ducked under the voice by a sidechain compressor and
-both are audible in the artifact's single audio stream; over a silent take, that
-stream is the voice alone — and muxes it over the video. Unless
-`subtitles=false` — styled ASS captions are also burned. The deliverable is
-written to `<id>.narrated.<fmt>` and published only after validation; the
-finalized master at the take's `master_path` is never modified, so re-narrating
-(re-writing the script and re-rendering) always starts from the clean capture.
-The video stream is re-encoded only where work is done on it — caption burn-in,
-or extending the picture with cloned frames when the narration runs past the
-recorded extent (reported as `narration.extended_ms`) — and stream-copied
-otherwise. The result is re-validated: exactly one video stream plus exactly
-one audio stream. A
-narration failure never destroys the take: the master stays in place
-and the reason lands in `result.narration.error` — for example, an ffmpeg build
-without the `subtitles` filter cannot burn captions. Retry that take with
-`subtitles=false`. To burn captions, start the server with a libass-enabled
-ffmpeg on `PATH` before recording; restarting the server to change `PATH`
-forgets its in-memory takes.
+the whole mix is normalized to −16 LUFS; over a silent take, that stream is the
+voice alone — and muxes it over the video. The voice is tunable: `rate`,
+`volume` and `pitch` are passed to edge-tts, `length_scale` to piper, and the
+result reports what was used (`character`).
 
-**Anchors are checked against the master's picture.** Both `event_id`
-and `at_ms` are validated against the playable video extent — the video stream's
-own duration, falling back to the container's — so speech cannot be anchored
+Captions are split into sentence-shaped phrases, timed by the engine's own cues
+where they match the phrase and proportionally by characters otherwise, burned
+unless `subtitles=false`, and written as **SRT and WebVTT sidecars beside every
+deliverable either way** — so players, YouTube and translators get the timings
+even when this ffmpeg build lacks libass. `position="auto"` lifts a caption to
+the top when the events inside its window acted in the bottom third of the
+picture (the events are read for placement, never for prose).
+
+**Plan before you record.** `dry_run=true` answers synchronously with the
+schedule — every segment's synthesized duration and any overruns past the
+master's extent — without muxing or publishing, so a demonstration can be paced
+to the script before it is recorded.
+
+The deliverable is written to `<id>.narrated.<fmt>` (or `<id>.<variant>.<fmt>`
+with `variant="it"`, for narration in another language from the same take and
+master) and published only after validation; the finalized master at the take's
+`master_path` is never modified, so re-rendering always starts from the clean
+capture. The video stream is re-encoded only where work is done on it — caption
+burn-in, or extending the picture with cloned frames when the narration runs
+past the recorded extent (reported as `narration.extended_ms`) — and
+stream-copied otherwise. The result is re-validated: exactly one video stream
+plus exactly one audio stream. A narration failure never destroys the take: the
+master stays in place and the reason lands in `result.narration.error` — for
+example, an ffmpeg build without the `subtitles` filter cannot burn captions
+(the sidecars are still written). Retry that take with `subtitles=false`. To
+burn captions, start the server with a libass-enabled ffmpeg on `PATH` before
+recording; restarting the server to change `PATH` forgets its in-memory
+state.
+
+**Anchors are checked against the master's picture.** `event_id`, `at_ms` and
+`match` (`{"tool", "payload", "nth"}` — exactly one real event, so a script
+survives a re-record) are validated against the playable video extent — the
+video stream's own duration, falling back to the container's — so speech cannot
+be anchored
 after the last frame. A segment that would run *past* that frame is not dropped:
 the picture is extended with cloned frames to cover it. An event id that exists
 but resolves past the end of the master's video is still refused, with both
@@ -302,11 +320,11 @@ keep GIF for silent, looping previews.
 
 **My narration is too loud / too quiet against the desktop audio. Can I mix the
 levels?**
-The mix is automatic: over a take recorded with audio, the captured desktop
-sound is ducked while the voice speaks and returns between lines, in the
-deliverable's single audio stream. The levels themselves are not yet
-configurable — there is no loudness target you can set. If the narration is
-still hard to mix against your desktop sound, narrate a silent take (default
+The mix is automatic: the captured desktop sound is ducked while the voice
+speaks and the whole deliverable is normalized to −16 LUFS integrated, so takes
+are level-consistent across a channel. The voice itself is tunable with `rate`,
+`volume` and `pitch` (edge) or `length_scale` (piper). If it is still hard to
+mix against unusually loud desktop sound, narrate a silent take (default
 `audio="off"`) when the voice is the point.
 
 **Can I get narration *and* desktop audio in the same file?**
