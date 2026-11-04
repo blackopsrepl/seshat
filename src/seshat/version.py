@@ -8,4 +8,4 @@ server name and version without a circular import.
 from __future__ import annotations
 
 SERVER_NAME = "seshat"
-SERVER_VERSION = "0.1.5"
+SERVER_VERSION = "0.2.0"

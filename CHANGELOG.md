@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.2.0](https://github.com/blackopsrepl/seshat/compare/v0.1.5...v0.2.0) (2026-11-04)
+
+
+### Features
+
+* **takes:** finalized takes survive restarts through a durable store, surfaced by list/discard/export d8a01f8
+* **tts:** engine=auto is offline-only; edge is an explicit opt-in with a pinned default voice 0e06e14
+
+
+### Bug Fixes
+
+* **store:** adopt across the tmpfs/store device boundary, and derive beside the take 77cf18b
+
+
+### Documentation
+
+* the durable take store, the offline engine policy and the status wait on every surface ffffea7
+
 ## [0.1.5](https://github.com/blackopsrepl/seshat/compare/v0.1.4...v0.1.5) (2026-11-04)
 
 
