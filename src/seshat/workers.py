@@ -400,9 +400,15 @@ def build_render(
             )
             meta["teaser"] = str(teaser_path)
     except core.ToolError as exc:
-        candidate.unlink(missing_ok=True)
+        rejected = candidate.with_name(candidate.name + ".reject")
+        try:
+            os.replace(candidate, rejected)
+        except OSError:
+            rejected = None
         with manager._lock:
-            job.render_error = str(exc)
+            job.render_error = str(exc) + (
+                f" (the candidate is kept at {rejected})" if rejected is not None else ""
+            )
             job.detail = f"render failed: {exc}"
         return
     except Exception as exc:

@@ -228,6 +228,13 @@ def compute_edit(job: recording.RecordingJob, plan: dict[str, Any]) -> Edit:
         pad = plan["trim"]["pad_ms"]
         trim_start_ms = max(times[0] - pad, 0.0)
         trim_end_ms = min(times[-1] + pad, media_ms)
+        if trim_end_ms - trim_start_ms < 100.0:
+            raise core.ToolError(
+                "the trim collapses to an empty window: the take's last "
+                "in-picture event is at "
+                f"{round(times[-1])} ms and the picture runs {round(media_ms)} ms; "
+                "pass a wider pad or record a longer demonstration"
+            )
 
     idle = plan.get("idle") or {"min_gap_ms": RENDER_IDLE_MIN_GAP_MAX, "speed": 1.0}
     if idle["speed"] <= 1.0:
@@ -388,26 +395,28 @@ def perform(manager: Any, arguments: dict[str, Any]) -> dict[str, Any]:
             target=workers.build_render, args=(manager, job, plan, edit), daemon=True
         )
         worker.start()
-        deadline = time.monotonic() + 540.0
-        while time.monotonic() < deadline:
-            worker.join(timeout=5.0)
-            with manager._lock:
-                if manager._jobs.get(job.id) is not job:
-                    raise core.ToolError(f"take {job.id} was discarded while rendering")
-                if job.render_result is not None or job.render_error is not None:
-                    result, detail = job.render_result, job.render_error
-                    job.render_result = None
-                    job.render_error = None
-                    break
-        else:
-            with manager._lock:
+    # The join runs with the lock released: the worker takes the same lock at
+    # its end, so joining inside the block deadlocks both sides.
+    deadline = time.monotonic() + 540.0
+    while time.monotonic() < deadline:
+        worker.join(timeout=5.0)
+        with manager._lock:
+            if manager._jobs.get(job.id) is not job:
+                raise core.ToolError(f"take {job.id} was discarded while rendering")
+            if job.render_result is not None or job.render_error is not None:
+                result, detail = job.render_result, job.render_error
                 job.render_result = None
-            raise core.ToolError(
-                "the render did not finish within 9 minutes; split the take to render it"
-            )
-        if detail is not None:
-            raise core.ToolError(str(detail))
-        return result
+                job.render_error = None
+                break
+    else:
+        with manager._lock:
+            job.render_result = None
+        raise core.ToolError(
+            "the render did not finish within 9 minutes; split the take to render it"
+        )
+    if detail is not None:
+        raise core.ToolError(str(detail))
+    return result
 
 
 def stitch(manager: Any, selected: Any, arguments: dict[str, Any]) -> dict[str, Any]:

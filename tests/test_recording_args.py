@@ -389,7 +389,8 @@ class UnknownArgumentTests(unittest.TestCase):
     def test_declared_start_arguments_are_the_whole_surface(self) -> None:
         self.assertEqual(
             set(recording.RECORDING_ARGUMENTS),
-            {"format", "audio", "output", "region", "max_duration_seconds", "timeline_sources"},
+            {"format", "audio", "output", "region", "window",
+             "max_duration_seconds", "timeline_sources"},
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):

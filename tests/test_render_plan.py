@@ -1,6 +1,7 @@
 """Unit tests for the render plan, its argv, and the render worker's contract."""
 
 import os
+import time
 import sys
 import unittest
 from pathlib import Path
@@ -228,6 +229,41 @@ class ArgvShapeTests(unittest.TestCase):
                               "width": 1280, "height": 720}]},
             ])
         self.assertIn("shape or codec differs", str(ctx.exception))
+
+
+class RenderJoinHoldsNoLockTests(unittest.TestCase):
+    """The sync render must not join its worker while holding the manager lock."""
+
+    def test_the_worker_runs_with_the_lock_free(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env = patch.dict(
+                os.environ,
+                {"XDG_RUNTIME_DIR": tmp, "XDG_STATE_HOME": str(Path(tmp) / "state")},
+            )
+            env.start()
+            self.addCleanup(env.stop)
+            manager = manager_module.RecordingManager()
+            job = completed_job(tmp, events=[event(500.0)])
+            manager._job = job
+            manager._jobs[job.id] = job
+            held = {}
+
+            def slow_worker(manager_, job_, plan_, edit_):
+                # Give the spawning thread time to leave the with-block; a join
+                # still holding the lock would block both sides meanwhile.
+                time.sleep(0.4)
+                held["free"] = manager_._lock.acquire(blocking=False)
+                if held["free"]:
+                    manager_._lock.release()
+                job_.render_result = {"render": {"path": "", "media_duration_ms": 0.0}}
+
+            with patch.object(render, "compute_edit", return_value=render.Edit(0.0, 1000.0)):
+                with patch.object(workers, "build_render", side_effect=slow_worker):
+                    try:
+                        render.perform(manager, {"profile": "native", "poster": False})
+                    except core.ToolError:
+                        pass
+            self.assertEqual(held.get("free"), True)
 
 
 if __name__ == "__main__":  # pragma: no cover

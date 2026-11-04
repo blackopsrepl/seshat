@@ -52,6 +52,16 @@ def tool_specs() -> list[dict[str, Any]]:
                         "additionalProperties": False,
                         "description": "Region fully contained in the selected output.",
                     },
+                    "window": {
+                        "type": "string",
+                        "description": (
+                            "Capture a window instead of a whole output: its class or "
+                            "title substring is resolved to a static rect in the "
+                            "compositor's tree at recording start, on the output it "
+                            "sits on. The rect is fixed for the take. Exclusive with "
+                            "region."
+                        ),
+                    },
                     "format": {
                         "type": "string",
                         "enum": list(recording.RECORDING_FORMATS),

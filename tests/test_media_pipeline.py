@@ -350,6 +350,20 @@ class RenderMediaTests(MediaPipelineTests):
             media.probe_duration_ms(Path(meta["path"])) / 1000.0, 20.0, delta=0.4
         )
 
+    def test_idle_retiming_applies_to_the_captured_audio(self) -> None:
+        # A take with a captured audio track: both streams re-time together.
+        job, events = self.master_with_events(seconds=6.0, tone_hz=1_000)
+        # The second event must sit inside this shorter take's picture.
+        events[1]["at_monotonic"] = events[0]["at_monotonic"] + 4.5
+        result = self.render_job(
+            job,
+            {"trim": {"pad_ms": 0.0}, "idle": {"min_gap_ms": 500.0, "speed": 4.0}},
+            events,
+        )
+        self.assertLess(result["media_duration_ms"] / 1000.0, 3.0)
+        mean, maximum = audio_volumes(Path(result["path"]), 0.0, 2.9)
+        self.assertGreater(maximum, -60.0)
+
 
 if __name__ == "__main__":
     unittest.main()

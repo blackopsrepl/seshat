@@ -54,34 +54,62 @@ def main_pass_argv(
     audio_label = "0:a"
 
     if any(segment.speed != 1.0 for segment in edit.segments):
-        # Idle speed-up: each segment re-times its own slice, then back together.
-        # A single merged sped segment still needs this: the merge is about the
-        # boundaries, not about whether the map re-times anything.
-        labels_v: list[str] = []
-        labels_a: list[str] = []
-        for index, segment in enumerate(edit.segments):
-            labels_v.append(f"v{index}")
+        # Idle speed-up: each segment re-times its own slice, then back
+        # together. The input labels split explicitly first: a reused label
+        # makes each branch re-run the whole upstream and the output runs the
+        # full input's length instead of the edit's. A single merged segment
+        # skips the machinery: split and concat of one stream are degenerate.
+        count = len(edit.segments)
+        if count == 1:
+            segment = edit.segments[0]
             filters.append(
                 f"[0:v]trim=start={segment.start_ms / 1000.0:.6f}:end={segment.end_ms / 1000.0:.6f},"
-                f"setpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[v{index}]"
+                f"setpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[vbase]"
             )
+            video_label = "vbase"
             if has_audio:
-                labels_a.append(f"a{index}")
                 filters.append(
                     f"[0:a]atrim=start={segment.start_ms / 1000.0:.6f}:end={segment.end_ms / 1000.0:.6f},"
-                    f"asetpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[a{index}]"
+                    f"asetpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[abase]"
                 )
-        filters.append(
-            "".join(f"[{l}]" for l in labels_v)
-            + f"concat=n={len(labels_v)}:v=1:a=0[vbase]"
-        )
-        video_label = "vbase"
-        if has_audio:
+                audio_label = "abase"
+        else:
             filters.append(
-                "".join(f"[{l}]" for l in labels_a)
-                + f"concat=n={len(labels_a)}:v=0:a=1[abase]"
+                "[0:v]split=" + str(count) + "".join(f"[sv{i}]" for i in range(count))
             )
-            audio_label = "abase"
+            labels_v: list[str] = []
+            labels_a: list[str] = []
+            for index, segment in enumerate(edit.segments):
+                labels_v.append(f"v{index}")
+                filters.append(
+                    f"[sv{index}]trim=start={segment.start_ms / 1000.0:.6f}:end={segment.end_ms / 1000.0:.6f},"
+                    f"setpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[v{index}]"
+                )
+                if has_audio:
+                    labels_a.append(f"a{index}")
+                    filters.append(
+                        f"[0:a]atrim=start={segment.start_ms / 1000.0:.6f}:end={segment.end_ms / 1000.0:.6f},"
+                        f"asetpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[a{index}]"
+                    )
+            filters.append(
+                "".join(f"[{l}]" for l in labels_v)
+                + f"concat=n={len(labels_v)}:v=1:a=0[vbase]"
+            )
+            video_label = "vbase"
+            if has_audio:
+                filters.append(
+                    "[0:a]asplit=" + str(count) + "".join(f"[sa{i}]" for i in range(count))
+                )
+                for index, segment in enumerate(edit.segments):
+                    filters.append(
+                        f"[sa{index}]atrim=start={segment.start_ms / 1000.0:.6f}:end={segment.end_ms / 1000.0:.6f},"
+                        f"asetpts=(PTS-STARTPTS)*{1.0 / segment.speed:.6f}[a{index}]"
+                    )
+                filters.append(
+                    "".join(f"[{l}]" for l in labels_a)
+                    + f"concat=n={len(labels_a)}:v=0:a=1[abase]"
+                )
+                audio_label = "abase"
     elif edit.trim_start_ms > 0.0 or edit.trim_end_ms > 0.0:
         filters.append(f"[0:v]{trim_part}[vbase]")
         video_label = "vbase"
@@ -125,10 +153,18 @@ def main_pass_argv(
 
 
 def _zoom_overlay_filters(edit: Edit, iw: int, ih: int, base: str) -> list[str]:
-    """One overlay branch per window; windows are hard cuts that hold, then release."""
+    """One overlay branch per window; windows are hard cuts that hold, then release.
+
+    The base splits explicitly each time: the zoom crop reads one branch, the
+    overlay's primary the other, and the timeline ends with the edit.
+    """
+    if not edit.zoom_windows:
+        return []
     filters: list[str] = []
-    label = base
+    stage = base
     for index, window in enumerate(edit.zoom_windows):
+        primary, branch = f"p{index}", f"q{index}"
+        filters.append(f"[{stage}]split=2[{primary}][{branch}]")
         scale = window.scale
         crop_w = max(int(round(iw / scale)) & ~1, 2)
         crop_h = max(int(round(ih / scale)) & ~1, 2)
@@ -136,16 +172,14 @@ def _zoom_overlay_filters(edit: Edit, iw: int, ih: int, base: str) -> list[str]:
         y = max(0.0, min(window.y - crop_h / 2.0, ih - crop_h))
         start = max(window.t_ms - 50.0, 0.0) / 1000.0
         end = (window.t_ms + window.hold_ms + 50.0) / 1000.0
-        zoomed = f"z{index}"
-        merged = f"bz{index}"
         filters.append(
-            f"[{label}]crop=w={crop_w}:h={crop_h}:x={int(round(x))}:y={int(round(y))},"
-            f"scale=w={iw}:h={ih}[{zoomed}]"
+            f"[{branch}]crop=w={crop_w}:h={crop_h}:x={int(round(x))}:y={int(round(y))},"
+            f"scale=w={iw}:h={ih}[z{index}]"
         )
         filters.append(
-            f"[{label}][{zoomed}]overlay=enable='between(t,{start:.3f},{end:.3f})'[{merged}]"
+            f"[{primary}][z{index}]overlay=enable='between(t,{start:.3f},{end:.3f})'[bz{index}]"
         )
-        label = merged
+        stage = f"bz{index}"
     return filters
 
 

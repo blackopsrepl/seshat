@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import core, encoding, media, outputs, streams, timeline
+from . import core, encoding, media, outputs, streams, timeline, windows
 
 # pactl only answers a session's own audio server; one second is plenty.
 RECORDING_PACTL_TIMEOUT_SECONDS = 1.0
@@ -22,6 +22,7 @@ RECORDING_ARGUMENTS = (
     "audio",
     "output",
     "region",
+    "window",
     "max_duration_seconds",
     "timeline_sources",
 )
@@ -282,8 +283,24 @@ def allocate_recording_paths(fmt: str) -> tuple[str, Path, Path, Path, int]:
 
 def new_recording_job(arguments: dict[str, Any]) -> RecordingJob:
     fmt = parse_recording_format(arguments.get("format"))
-    output = select_recording_output(arguments.get("output"))
+    window = arguments.get("window")
+    if window is not None and arguments.get("region") is not None:
+        raise core.ToolError("region and window are exclusive: name one capture target")
+    if window is not None:
+        region_rect = windows.find_window_rect(window)
+        output = windows.containing_output(region_rect, outputs.get_outputs())
+        if output is None:
+            raise core.ToolError(
+                "the window's rect is not on any active output; it is likely "
+                "minimized, on a workspace with no output, or the tree moved"
+            )
+    else:
+        output = select_recording_output(arguments.get("output"))
     region = validate_contained_region(arguments.get("region"), output.get("rect") or {})
+    if window is not None:
+        # The window's rect is the capture target: it is validated against
+        # the output it actually sits on, not the focused one.
+        region = validate_contained_region(region_rect, output.get("rect") or {})
     max_duration = parse_max_duration(arguments.get("max_duration_seconds"), fmt)
     stream_sources = streams.parse_timeline_sources(arguments.get("timeline_sources"))
     audio, audio_source = resolve_audio_source(arguments, fmt)
