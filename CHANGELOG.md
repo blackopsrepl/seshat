@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.5](https://github.com/blackopsrepl/seshat/compare/v0.1.4...v0.1.5) (2026-11-04)
+
+
+### Features
+
+* **scripts:** a narration integration check that records the live screen 757a77f
+
+
+### Bug Fixes
+
+* **narration:** build from the finalized master so re-narration cannot compound b11a799
+* **narration:** mix the captured desktop track under the voice and extend the picture to cover it ae40a80
+* **server:** survive any message a client can send, and answer ping 1934507
+* **tools:** reject unknown arguments on every tool, and remove the hidden audio_source 1785179
+
+
+### Documentation
+
+* **readme:** state the narration mix and answer the audio questions users ask 3ba4c60
+* state the master/derived narration mix and clear every drift found by the surface audit 29428dc
+
 ## [0.1.4](https://github.com/blackopsrepl/seshat/compare/v0.1.3...v0.1.4) (2026-10-03)
 
 
