@@ -216,6 +216,45 @@ def adopt_into_store(
         core.eprint(f"could not write the manifest for {job.id}: {exc}")
 
 
+def plan(
+    manager: "RecordingManager",
+    job: recording.RecordingJob,
+    request: narration.NarrationRequest,
+    engine: tts.TtsEngine,
+    narration_arguments: dict[str, Any] | None = None,
+) -> None:
+    """The dry-run worker: real synthesis and schedule, nothing published.
+
+    The joining voiceover call turns ``job.plan`` into its answer, so the tool
+    returns the plan synchronously without a publish or a narrating phase.
+    """
+    with manager._lock:
+        job.plan = None
+        job.plan_error = None
+    try:
+        meta = narration.perform_narration(job, request, engine)
+    except core.ToolError as exc:
+        with manager._lock:
+            job.plan_error = str(exc)
+            job.detail = f"narration plan failed: {exc}"
+        return
+    except Exception as exc:
+        core.eprint(f"unexpected narration plan error for {job.id}: {exc}")
+        with manager._lock:
+            job.plan_error = "unexpected narration plan failure; see server log"
+            job.detail = "unexpected narration plan failure; see server log"
+        return
+    with manager._lock:
+        job.plan = meta
+        job.detail = None
+        if job.state_dir is not None:
+            try:
+                store.append_narration_record(job.id, narration_arguments or {},
+                                              {"plan": True, "segments": meta.get("segments", [])})
+            except OSError as exc:
+                core.eprint(f"could not journal the plan for {job.id}: {exc}")
+
+
 def narrate(
     manager: "RecordingManager",
     job: recording.RecordingJob,
@@ -223,6 +262,7 @@ def narrate(
     engine: tts.TtsEngine,
     narration_arguments: dict[str, Any] | None = None,
 ) -> None:
+    """The narration worker: synthesize, schedule, mux, validate, publish."""
     try:
         narration_meta = narration.perform_narration(job, request, engine)
         deliverable = Path(narration_meta["path"])

@@ -211,6 +211,9 @@ class RecordingManager:
             return document
 
     def voiceover(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        request: narration.NarrationRequest | None = None
+        plan_worker: threading.Thread | None = None
+        job: recording.RecordingJob | None = None
         with self._lock:
             job = self._select(arguments.get("id"))
             if job is None:
@@ -232,13 +235,49 @@ class RecordingManager:
                 pass
             request = narration.parse_narration_arguments(narration_arguments, job)
             engine = tts.resolve_tts_engine(request.engine)
-            job.phase = "narrating"
-            job.detail = None
-            job.thread = threading.Thread(
-                target=workers.narrate, args=(self, job, request, engine, narration_arguments), daemon=True
+            job.thread = None
+            if request.dry_run:
+                # Plan mode answers synchronously with the schedule it computed.
+                # Synthesis can take seconds — the worker takes this same lock at
+                # its end, so it must be joined with the lock released.
+                job.plan = None
+                job.plan_error = None
+                plan_worker = threading.Thread(
+                    target=workers.plan,
+                    args=(self, job, request, engine, narration_arguments),
+                    daemon=True,
+                )
+                job.thread = plan_worker
+                plan_worker.start()
+        # Past the lock: the plan worker takes the same lock at its end, so it
+        # must be joined here, not while this call still holds the lock.
+        if plan_worker is None:
+            # The narrating phase is set here, under the lock, exactly once.
+            with self._lock:
+                if self._jobs.get(job.id) is not job:
+                    raise core.ToolError(f"take {job.id} was discarded before narration")
+                engine = tts.resolve_tts_engine(request.engine)
+                job.phase = "narrating"
+                job.detail = None
+                job.thread = threading.Thread(
+                    target=workers.narrate, args=(self, job, request, engine, narration_arguments), daemon=True
+                )
+                job.thread.start()
+                return self._summary(job)
+        plan_worker.join(
+            timeout=tts.NARRATION_BUILD_TIMEOUT_SECONDS + tts.NARRATION_SYNTH_TIMEOUT_SECONDS
+        )
+        with self._lock:
+            if self._jobs.get(job.id) is not job:
+                raise core.ToolError(f"take {job.id} was discarded while planning")
+            plan, plan_error = job.plan, job.plan_error
+            job.plan = None
+            job.plan_error = None
+        if plan is None:
+            raise core.ToolError(
+                str(plan_error) or "the narration plan did not finish in time"
             )
-            job.thread.start()
-            return self._summary(job)
+        return plan
 
     def scenes(self, arguments: dict[str, Any]) -> dict[str, Any]:
         threshold = core.strict_number(

@@ -38,6 +38,8 @@ class VoiceoverLifecycleTests(unittest.TestCase):
             "audio_included": False,
         }
         self.manager._job = job
+        # The manager's own contract: a narratable take is a findable one.
+        self.manager._jobs[job.id] = job
 
     def test_gif_narration_is_refused(self) -> None:
         job = completed_job(self.tmp.name, fmt="gif")
@@ -137,6 +139,56 @@ class VoiceoverLifecycleTests(unittest.TestCase):
         self.assertTrue(manifest["narration"]["path"].endswith("narrated.webm"))
 
 
+class DryRunPlanTests(unittest.TestCase):
+    """dry_run answers synchronously with the schedule; nothing publishes."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        env = patch.dict(
+            os.environ,
+            {"XDG_RUNTIME_DIR": self.tmp.name, "XDG_STATE_HOME": str(Path(self.tmp.name) / "state")},
+        )
+        env.start()
+        self.addCleanup(env.stop)
+        self.manager = server.RecordingManager()
+        self.attach = lambda job: (
+            setattr(self.manager, "_job", job),
+            self.manager._jobs.__setitem__(job.id, job),
+        )
+
+    def test_plan_returns_the_schedule_without_a_phase_change(self) -> None:
+        publish(self.tmp.name, "computer-use-sway", [500.0])
+        job = completed_job(self.tmp.name, events=[event(500.0)])
+        self.attach(job)
+        with patch.object(tts, "resolve_tts_engine", return_value=server.EdgeTtsEngine()):
+            with patch.object(narration, "perform_narration", return_value={
+                "engine": "edge", "path": "", "segment_count": 1, "dry_run": True, "overruns": []
+            }) as perform:
+                with patch.object(narration, "recording_duration_ms", return_value=9000.0):
+                    plan = self.manager.voiceover(
+                        {"segments": [{"anchor": {"event_id": 1}, "text": "hi"}], "dry_run": True}
+                    )
+        self.assertTrue(plan["dry_run"])
+        self.assertEqual(job.phase, "completed")
+        self.assertIsNone(job.narration)
+        perform.assert_called_once()
+
+    def test_a_failing_plan_raises_a_tool_error_and_leaves_the_take(self) -> None:
+        publish(self.tmp.name, "computer-use-sway", [500.0])
+        job = completed_job(self.tmp.name, events=[event(500.0)])
+        self.attach(job)
+        with patch.object(tts, "resolve_tts_engine", return_value=server.EdgeTtsEngine()):
+            with patch.object(
+                narration, "perform_narration", side_effect=server.ToolError("tts exploded")
+            ):
+                with patch.object(narration, "recording_duration_ms", return_value=9000.0):
+                    with self.assertRaises(server.ToolError) as ctx:
+                        self.manager.voiceover(
+                            {"segments": [{"anchor": {"event_id": 1}, "text": "hi"}], "dry_run": True}
+                        )
+        self.assertIn("tts exploded", str(ctx.exception))
+        self.assertEqual(job.phase, "completed")
 class TimelineIngestionTests(unittest.TestCase):
     """Anchors come from published streams, never from seshat's own dispatch."""
 
