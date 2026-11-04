@@ -5,6 +5,8 @@ import os
 import signal
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -104,6 +106,48 @@ class ManagerLifecycleTests(RecordingManagerCase):
         self.assertEqual(summary["phase"], "processing")
         job.thread.join(timeout=5)
         self.assertEqual(self.manager.status()["phase"], "completed")
+
+    def test_status_wait_blocks_until_terminal_or_releases(self) -> None:
+        """wait_seconds waits out finalize/narrate instead of costing a poll turn."""
+        process = self.start_ok()
+        job = self.manager._job
+        job.intermediate.write_bytes(b"capture-bytes")
+        process.receive_signal(0)
+
+        released = threading.Event()
+        self.addCleanup(released.set)
+
+        def finalize(j: recording.RecordingJob) -> dict:
+            released.wait(timeout=5)
+            return {"codec": "av1", "media_duration_seconds": 2.0}
+
+        with patch.object(recording, "finalize_recording", side_effect=finalize):
+            summary = self.manager.status({"wait_seconds": 0.4})
+        # Still blocked in finalize after 0.4s: no terminal phase, no error.
+        self.assertEqual(summary["phase"], "processing")
+        released.set()
+        with patch.object(recording, "finalize_recording", side_effect=lambda j: {"codec": "av1"}):
+            final = self.manager.status({"wait_seconds": 5.0})
+        self.assertEqual(final["phase"], "completed")
+
+    def test_the_watchdog_reaps_a_dead_recorder_without_a_poll(self) -> None:
+        """A recorder that dies between polls is discovered within its sleep."""
+        process = self.start_ok()
+        job = self.manager._job
+        job.intermediate.write_bytes(b"capture-bytes")
+        with patch.object(recording, "finalize_recording", side_effect=lambda j: {"codec": "av1"}):
+            # No status call at all: only the watchdog thread is watching.
+            process.receive_signal(0)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                thread = self.manager._job.thread if self.manager._job else None
+                if thread is not None:
+                    thread.join(timeout=0.05)
+                if self.manager.status()["phase"] == "completed":
+                    break
+                time.sleep(0.05)
+        self.assertEqual(self.manager.status()["phase"], "completed")
+        self.assertEqual(job.termination_stage, "natural")
 
     def test_unexpected_recorder_exit_fails_with_log_tail(self) -> None:
         process = self.start_ok()

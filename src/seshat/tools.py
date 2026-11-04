@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-from . import core, manager, outputs, recording, session, streams, tts
+from . import core, manager, outputs, recording, session, streams, store, tts
 from .version import SERVER_NAME, SERVER_VERSION
 
 
@@ -49,6 +49,7 @@ def tool_seshat_info(arguments: dict[str, Any]) -> list[dict[str, str]]:
         "runtime": {
             "streams": str(streams.stream_directory()),
             "recordings": str(streams.runtime_root() / recording.RECORDING_DIRECTORY_NAME),
+            "store": str(store.state_takes_root()),
         },
         "streams": [str(path) for path in streams.discover_streams()],
         "session": session_report,
@@ -100,6 +101,18 @@ def tool_recording_scenes(arguments: dict[str, Any]) -> list[dict[str, str]]:
     return core.json_text(manager.RECORDINGS.scenes(arguments))
 
 
+def tool_recording_list(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    return core.json_text(manager.RECORDINGS.list_takes(arguments))
+
+
+def tool_recording_discard(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    return core.json_text(manager.RECORDINGS.discard(arguments))
+
+
+def tool_recording_export(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    return core.json_text(manager.RECORDINGS.export(arguments))
+
+
 TOOLS = {
     "seshat_info": tool_seshat_info,
     "recording_start": tool_recording_start,
@@ -108,4 +121,7 @@ TOOLS = {
     "recording_timeline": tool_recording_timeline,
     "recording_voiceover": tool_recording_voiceover,
     "recording_scenes": tool_recording_scenes,
+    "recording_list": tool_recording_list,
+    "recording_discard": tool_recording_discard,
+    "recording_export": tool_recording_export,
 }

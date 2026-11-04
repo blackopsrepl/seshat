@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import signal
 import stat
@@ -91,7 +92,8 @@ class VoiceoverLifecycleTests(unittest.TestCase):
         job = completed_job(self.tmp.name, events=[event(500.0)])
         self.attach(job)
         with patch.object(tts, "resolve_tts_engine", return_value=server.EdgeTtsEngine()):
-            with patch.object(narration, "perform_narration", side_effect=server.ToolError("tts exploded")
+            with patch.object(
+                narration, "perform_narration", side_effect=server.ToolError("tts exploded")
             ):
                 with patch.object(narration, "recording_duration_ms", return_value=9000.0):
                     self.manager.voiceover(
@@ -101,6 +103,37 @@ class VoiceoverLifecycleTests(unittest.TestCase):
         final = self.manager.status()
         self.assertEqual(final["phase"], "completed")
         self.assertIn("tts exploded", final["narration"]["error"])
+
+    def test_success_journals_the_narration_into_the_store(self) -> None:
+        job = completed_job(self.tmp.name, events=[event(500.0)])
+        self.attach(job)
+        state = Path(self.tmp.name) / "state"
+        env = patch.dict(os.environ, {"XDG_STATE_HOME": str(state)})
+        env.start()
+        self.addCleanup(env.stop)
+        job.state_dir = state / "seshat" / "takes" / job.id
+        job.state_dir.mkdir(parents=True)
+
+        def fake_perform(j, request, engine):
+            j.narrated_path.write_bytes(b"narrated")
+            return {"engine": engine.name}
+
+        fresh = {
+            "codec": "av1", "container": "webm", "mime_type": "video/webm",
+            "width": 640, "height": 360, "media_duration_seconds": 9.75, "frame_rate": 30.0,
+        }
+        request_arguments = {"segments": [{"anchor": {"event_id": 1}, "text": "hi"}]}
+        with patch.object(tts, "resolve_tts_engine", return_value=server.EdgeTtsEngine()):
+            with patch.object(narration, "perform_narration", side_effect=fake_perform):
+                with patch.object(recording, "validate_recording_artifact", return_value=fresh):
+                    with patch.object(narration, "recording_duration_ms", return_value=9000.0):
+                        self.manager.voiceover(dict(request_arguments))
+                        job.thread.join(timeout=5)
+        journal = state / "seshat" / "takes" / job.id / "narration.jsonl"
+        lines = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(lines[0]["arguments"], request_arguments)
+        manifest = json.loads((state / "seshat" / "takes" / job.id / "take.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["narration"], {"engine": "edge"})
 
 
 class TimelineIngestionTests(unittest.TestCase):

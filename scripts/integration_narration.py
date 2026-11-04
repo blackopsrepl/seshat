@@ -122,6 +122,8 @@ def main() -> int:
     }, indent=2, sort_keys=True))
     for path in (master, deliverable, master.with_name(f"{take_id}.timeline.json")):
         path.unlink(missing_ok=True)
+    from seshat import store
+    store.delete_take(take_id)
     return 1 if failures else 0
 
 

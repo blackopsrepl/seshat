@@ -13,7 +13,9 @@ from . import (
     recording,
     reporting,
     scenes,
+    store,
     streams,
+    takes,
     timeline,
     tts,
     workers,
@@ -45,15 +47,28 @@ class RecordingManager:
         self._lock = threading.Lock()
         self._job: recording.RecordingJob | None = None
         self._jobs: dict[str, recording.RecordingJob] = {}
+        for document in store.scan_store():
+            try:
+                job = takes.job_from_manifest(document)
+            except (core.ToolError, KeyError, ValueError, TypeError) as exc:
+                core.eprint(f"could not rehydrate a stored take: {exc}")
+                continue
+            self._jobs[job.id] = job
 
     def _select(self, requested: Any) -> recording.RecordingJob | None:
-        """Resolve an explicit recording id, defaulting to the latest job.
+        """Resolve an explicit recording id, defaulting to the latest take.
 
-        Caller must hold the lock. An unknown id is always a clear error so a
-        multi-take workflow cannot silently narrate the wrong take.
+        Caller must hold the lock. Without an explicit id the last take wins:
+        the one this process recorded if it has one, else the newest rehydrated
+        take from the store, so a fresh session can still narrate the take it
+        just found. An unknown id is always a clear error so a multi-take
+        workflow cannot silently narrate the wrong take.
         """
         if requested is None:
-            return self._job
+            if self._job is not None:
+                return self._job
+            jobs = sorted(self._jobs.values(), key=lambda job: (job.started_utc, job.id))
+            return jobs[-1] if jobs else None
         if not isinstance(requested, str) or not requested:
             raise core.ToolError("id must be a non-empty recording id")
         job = self._jobs.get(requested)
@@ -107,37 +122,36 @@ class RecordingManager:
             return self._summary(new_job)
 
     def status(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        core.reject_unknown(arguments or {}, ("id",), "recording_status")
-        with self._lock:
-            job = self._select((arguments or {}).get("id"))
-            if job is None:
-                return {"phase": "idle"}
-            if job.phase == "recording":
-                process = job.process
-                if process is not None and process.poll() is not None:
-                    exited = time.monotonic()
-                    job.stop_requested_monotonic = exited
-                    job.ended_monotonic = exited
-                    job.process_exited_monotonic = exited
-                    job.termination_stage = "natural"
-                    job.recorder_returncode = process.returncode
-                    workers.close_log_fd(job)
-                    if process.returncode != 0:
-                        tail = workers.log_tail(job)
-                        workers.fail(
-                            job,
-                            f"wf-recorder exited unexpectedly (code {process.returncode})"
-                            + (f": {tail}" if tail else ""),
-                        )
-                    elif workers.intermediate_size(job) == 0:
-                        workers.fail(job, "capture produced no data")
-                    else:
-                        job.phase = "processing"
-                        job.thread = threading.Thread(
-                            target=workers.finalize, args=(self, job), daemon=True
-                        )
-                        job.thread.start()
-            return self._summary(job)
+        arguments = arguments or {}
+        core.reject_unknown(arguments, ("id", "wait_seconds"), "recording_status")
+        wait_seconds = 0.0
+        if arguments.get("wait_seconds") is not None:
+            wait_seconds = core.strict_number(
+                arguments["wait_seconds"], "wait_seconds", minimum=0.0, maximum=60.0
+            )
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            with self._lock:
+                job = self._select(arguments.get("id"))
+                if job is None:
+                    return {"phase": "idle"}
+                summary = self._refresh(job)
+            if summary["phase"] in {"completed", "failed"} or wait_seconds <= 0.0:
+                return summary
+            if time.monotonic() >= deadline:
+                return summary
+            time.sleep(0.25)
+
+    def _refresh(self, job: recording.RecordingJob) -> dict[str, Any]:
+        """Advance a recording-phase take whose recorder has exited, then summarize.
+
+        Caller must hold the lock. The watchdog also calls this path, so a
+        recorder that dies between polls is discovered within half a second
+        instead of only when someone looks.
+        """
+        if job.phase == "recording" and workers.reap_exited_recorder(self, job):
+            pass
+        return self._summary(job)
 
     def stop(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         core.reject_unknown(arguments or {}, (), "recording_stop")
@@ -178,6 +192,12 @@ class RecordingManager:
             job = self._select((arguments or {}).get("id"))
             if job is None:
                 return {"phase": "idle", "event_count": 0, "events": [], "sources": []}
+            if job.rehydrated:
+                document = timeline.timeline_document(job)
+                document["phase"] = job.phase
+                if job.timeline_path is not None and job.timeline_path.exists():
+                    document["timeline_path"] = str(job.timeline_path)
+                return document
             self.ingest_events(job)
             document = timeline.timeline_document(job)
             document["phase"] = job.phase
@@ -204,13 +224,18 @@ class RecordingManager:
                     f"recording must be completed before narration (phase: {job.phase})"
                 )
             narration_arguments = {key: value for key, value in arguments.items() if key != "id"}
-            self.ingest_events(job)
+            if not job.rehydrated:
+                self.ingest_events(job)
+            else:
+                # A stored take's sidecar is already its timeline; re-ingesting
+                # would read whatever streams this new process can see.
+                pass
             request = narration.parse_narration_arguments(narration_arguments, job)
             engine = tts.resolve_tts_engine(request.engine)
             job.phase = "narrating"
             job.detail = None
             job.thread = threading.Thread(
-                target=workers.narrate, args=(self, job, request, engine), daemon=True
+                target=workers.narrate, args=(self, job, request, engine, narration_arguments), daemon=True
             )
             job.thread.start()
             return self._summary(job)
@@ -271,6 +296,63 @@ class RecordingManager:
                 lifecycle.RECORDING_KILL_TIMEOUT_SECONDS,
                 lifecycle.RECORDING_FINAL_WAIT_SECONDS,
             )) + 1.0)
+
+    def list_takes(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        core.reject_unknown(arguments or {}, (), "recording_list")
+        with self._lock:
+            jobs = sorted(
+                self._jobs.values(),
+                key=lambda job: (job.started_utc, job.id),
+            )
+            entries = [takes.list_entry(job) for job in jobs]
+        return {
+            "store": str(store.state_takes_root()),
+            "count": len(entries),
+            "takes": entries,
+        }
+
+    def discard(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        core.reject_unknown(arguments, ("id",), "recording_discard")
+        with self._lock:
+            job = self._select(arguments.get("id"))
+            if job is None:
+                raise core.ToolError("no recording to discard; nothing has been recorded")
+            if job.phase in {"recording", "stopping", "processing", "narrating"}:
+                raise core.ToolError(
+                    f"cannot discard an active take (phase: {job.phase}); stop it first"
+                )
+            removed = store.take_directory(job.id) if job.state_dir is not None else None
+            self._jobs.pop(job.id, None)
+            if self._job is job:
+                self._job = None
+        if removed is not None:
+            store.delete_take(job.id)
+        return {
+            "id": job.id,
+            "discarded": True,
+            "state_dir": str(job.state_dir) if job.state_dir is not None else None,
+        }
+
+    def export(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        core.reject_unknown(arguments, ("id", "destination"), "recording_export")
+        destination = arguments.get("destination")
+        if not isinstance(destination, str) or not destination.strip():
+            raise core.ToolError("destination must be a non-empty path")
+        with self._lock:
+            job = self._select(arguments.get("id"))
+            if job is None:
+                raise core.ToolError("no recording to export")
+            if job.phase != "completed":
+                raise core.ToolError(
+                    f"export needs a completed take (phase: {job.phase})"
+                )
+            files = store.export_take(job, destination)
+            return {
+                "id": job.id,
+                "destination": destination,
+                "count": len(files),
+                "files": files,
+            }
 
     # -- internals -------------------------------------------------------
 

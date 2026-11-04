@@ -66,6 +66,8 @@ class RecordingJob:
     recorder_returncode: int | None = None
     ended_monotonic: float | None = None
     result: dict[str, Any] | None = None
+    rehydrated: bool = False
+    state_dir: Path | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     stream_sources: list[str] | None = None
     stream_report: list[dict[str, Any]] = field(default_factory=list)

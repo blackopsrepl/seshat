@@ -118,10 +118,17 @@ def handle_message(message: Any) -> dict[str, Any] | None:
             }
         try:
             content = TOOLS[name](arguments)
+            result: dict[str, Any] = {"content": content, "isError": False}
+            try:
+                structured = json.loads(content[0]["text"])
+            except (json.JSONDecodeError, IndexError, TypeError):
+                structured = None
+            if isinstance(structured, dict):
+                result["structuredContent"] = structured
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "result": {"content": content, "isError": False},
+                "result": result,
             }
         except ToolError as exc:
             return {

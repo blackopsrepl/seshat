@@ -155,7 +155,15 @@ def main() -> int:
     print(json.dumps({"take": take_id, "artifact": str(artifact), "summary": summary,
                       "timeline": {k: v for k, v in document.items() if k != "events"}},
                      indent=2, sort_keys=True))
+    _delete_take(recordings, take_id)
     return 1 if failures else 0
+
+
+def _delete_take(recordings, take_id: str) -> None:
+    """Leave no artifact behind in either the runtime dir or the store."""
+    from seshat import store
+
+    store.delete_take(take_id)
 
 
 if __name__ == "__main__":

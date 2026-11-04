@@ -13,9 +13,10 @@ def tool_specs() -> list[dict[str, Any]]:
             "name": "seshat_info",
             "description": (
                 "Inspect the recorder: active take, stream and recording directories, "
-                "the streams that will be ingested, the capture outputs, and the "
-                "binaries narration depends on."
+                "the durable take store, the streams that will be ingested, the "
+                "capture outputs, and the binaries narration depends on."
             ),
+            "annotations": {"readOnlyHint": True},
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
         {
@@ -105,15 +106,27 @@ def tool_specs() -> list[dict[str, Any]]:
             "description": (
                 "Report the take lifecycle phase (idle, recording, stopping, processing, "
                 "narrating, completed, failed) plus live progress or final artifact "
-                "metadata."
+                "metadata. Set wait_seconds to have the call block until a terminal "
+                "phase or the cap, instead of polling."
             ),
+            "annotations": {"readOnlyHint": True},
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": {
                         "type": "string",
                         "description": "Take id from recording_start; defaults to the latest take.",
-                    }
+                    },
+                    "wait_seconds": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 60,
+                        "default": 0,
+                        "description": (
+                            "Block up to this long for the phase to reach completed/failed "
+                            "before returning the current phase."
+                        ),
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -126,6 +139,56 @@ def tool_specs() -> list[dict[str, Any]]:
                 "for the final artifact path and metadata."
             ),
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {"destructiveHint": True},
+        },
+        {
+            "name": "recording_list",
+            "description": (
+                "List every take this process knows: in-memory ones and those rehydrated "
+                "from the durable store, with their deliverable and master paths."
+            ),
+            "annotations": {"readOnlyHint": True},
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "recording_discard",
+            "description": (
+                "Delete one inactive take's store directory and drop it from memory. "
+                "Irreversible: export first if the files matter."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Take id from recording_list; defaults to the latest take.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "recording_export",
+            "description": (
+                "Copy one completed take's published files (master, deliverable, "
+                "timeline, manifest, narration journal) into a destination directory. "
+                "The only way take files leave the store."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Take id from recording_list; defaults to the latest take.",
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "Directory the files are copied into; created when missing.",
+                    },
+                },
+                "required": ["destination"],
+                "additionalProperties": False,
+            },
         },
         {
             "name": "recording_timeline",
@@ -136,6 +199,7 @@ def tool_specs() -> list[dict[str, Any]]:
                 "event ids as narration anchors. A sidecar JSON copy is written next to "
                 "the artifact on completion."
             ),
+            "annotations": {"readOnlyHint": True},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -190,6 +254,11 @@ def tool_specs() -> list[dict[str, Any]]:
                         "type": "string",
                         "enum": list(tts.NARRATION_ENGINES),
                         "default": "auto",
+                        "description": (
+                            "auto resolves to the offline piper engine only; edge-tts "
+                            "runs only when asked for explicitly, because it sends the "
+                            "narration prose to Microsoft over the network."
+                        ),
                     },
                     "voice": {"type": ["string", "null"]},
                     "offset_ms": {
@@ -230,6 +299,7 @@ def tool_specs() -> list[dict[str, Any]]:
                 "no timeline stream was published for the take; scene cuts are secondary "
                 "evidence, never the sync source."
             ),
+            "annotations": {"readOnlyHint": True},
             "inputSchema": {
                 "type": "object",
                 "properties": {

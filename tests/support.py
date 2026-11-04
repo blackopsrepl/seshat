@@ -147,7 +147,13 @@ class RecordingManagerCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        env = patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.tmp.name})
+        env = patch.dict(
+            os.environ,
+            {
+                "XDG_RUNTIME_DIR": self.tmp.name,
+                "XDG_STATE_HOME": str(Path(self.tmp.name) / "state"),
+            },
+        )
         env.start()
         self.addCleanup(env.stop)
         self.output_patch = patch.object(outputs, "get_outputs", return_value=single_output())

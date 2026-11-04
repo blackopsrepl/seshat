@@ -101,3 +101,8 @@ def write_timeline_sidecar(job: recording.RecordingJob) -> Path | None:
     finally:
         os.close(fd)
     return job.timeline_path
+
+
+def timeline_sidecar_document(path: Path) -> dict[str, Any]:
+    """The sidecar copy a completed take carries next to its artifact."""
+    return json.loads(path.read_text(encoding="utf-8"))

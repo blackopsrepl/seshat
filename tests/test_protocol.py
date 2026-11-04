@@ -51,6 +51,9 @@ class ProtocolTests(unittest.TestCase):
                 "recording_timeline",
                 "recording_voiceover",
                 "recording_scenes",
+                "recording_list",
+                "recording_discard",
+                "recording_export",
             },
         )
 
@@ -126,6 +129,7 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertFalse(response["result"]["isError"])
         self.assertEqual(json.loads(response["result"]["content"][0]["text"]), {"phase": "idle"})
+        self.assertEqual(response["result"].get("structuredContent"), {"phase": "idle"})
 
     def test_the_message_loop_outlives_an_undroutable_or_raising_message(self) -> None:
         bad = '[{"jsonrpc": "2.0", "id": 1, "method": "ping"}]'

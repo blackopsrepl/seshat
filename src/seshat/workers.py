@@ -13,10 +13,11 @@ hold the manager lock where a phase transition is involved.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from . import core, lifecycle, narration, recording, timeline, tts
+from . import core, lifecycle, narration, recording, store, timeline, tts
 
 if TYPE_CHECKING:
     from .manager import RecordingManager
@@ -60,11 +61,46 @@ def fail(job: recording.RecordingJob, message: str) -> None:
     job.artifact.unlink(missing_ok=True)
 
 
+def reap_exited_recorder(manager: "RecordingManager", job: recording.RecordingJob) -> None:
+    """Advance a recording-phase take whose recorder process has already exited.
+
+    Caller must hold the manager lock. Both the status poll and the watchdog
+    come through here, so a recorder that died on its own is reaped once, from
+    either path, and the take's facts record the exact way it ended.
+    """
+    process = job.process
+    if process is None or process.poll() is None:
+        return
+    job.stop_requested_monotonic = time.monotonic()
+    job.ended_monotonic = job.stop_requested_monotonic
+    job.process_exited_monotonic = job.stop_requested_monotonic
+    job.termination_stage = "natural"
+    job.recorder_returncode = process.returncode
+    close_log_fd(job)
+    if process.returncode != 0:
+        tail = log_tail(job)
+        fail(
+            job,
+            f"wf-recorder exited unexpectedly (code {process.returncode})"
+            + (f": {tail}" if tail else ""),
+        )
+        return
+    if intermediate_size(job) == 0:
+        fail(job, "capture produced no data")
+        return
+    job.phase = "processing"
+    job.thread = threading.Thread(target=finalize, args=(manager, job), daemon=True)
+    job.thread.start()
+
+
 def watchdog(manager: "RecordingManager", job: recording.RecordingJob) -> None:
     deadline = job.started_monotonic + job.max_duration
     while True:
         with manager._lock:
             if manager._job is not job or job.phase != "recording":
+                return
+            reap_exited_recorder(manager, job)
+            if job.phase != "recording":
                 return
             exceeded_time = time.monotonic() >= deadline
             exceeded_size = intermediate_size(job) > recording.RECORDING_MAX_INTERMEDIATE_BYTES
@@ -135,6 +171,44 @@ def finalize(manager: "RecordingManager", job: recording.RecordingJob) -> None:
         job.phase = "completed"
         discard_intermediate(job)
         job.log_path.unlink(missing_ok=True)
+        # The finalization owns adoption: the store keeps the take when this
+        # process ends; a failed store write keeps the take in the runtime dir
+        # whole and only costs the next session its memory.
+        adopt_into_store(manager, job, timeline_sidecar=timeline_path)
+
+
+def adopt_into_store(
+    manager: "RecordingManager",
+    job: recording.RecordingJob,
+    *,
+    timeline_sidecar: Any,
+) -> None:
+    """Move a completed take's published files into the durable store.
+
+    Caller must hold the manager lock.
+    """
+    try:
+        directory = store.adopt(job, timeline_sidecar)
+    except (OSError, core.ToolError) as exc:
+        core.eprint(f"could not move take {job.id} into the store: {exc}")
+        if job.result is not None:
+            job.result["store_error"] = str(exc)
+        return
+    job.state_dir = directory
+    job.artifact = directory / job.artifact.name
+    if job.timeline_path is not None:
+        job.timeline_path = directory / job.timeline_path.name
+    job.narrated_path = directory / job.narrated_path.name
+    if job.result is not None:
+        job.result["master_path"] = str(job.artifact)
+        job.result["path"] = str(job.artifact)
+        if job.timeline_path is not None:
+            job.result["timeline_path"] = str(job.timeline_path)
+        job.result["state_dir"] = str(directory)
+    try:
+        store.write_manifest(job)
+    except OSError as exc:
+        core.eprint(f"could not write the manifest for {job.id}: {exc}")
 
 
 def narrate(
@@ -142,6 +216,7 @@ def narrate(
     job: recording.RecordingJob,
     request: narration.NarrationRequest,
     engine: tts.TtsEngine,
+    narration_arguments: dict[str, Any] | None = None,
 ) -> None:
     try:
         narration_meta = narration.perform_narration(job, request, engine)
@@ -183,3 +258,9 @@ def narrate(
             job.result["master_path"] = str(job.artifact)
             job.result["audio_included"] = True
             job.result["narration"] = narration_meta
+            if job.state_dir is not None:
+                try:
+                    store.append_narration_record(job.id, narration_arguments or {}, narration_meta)
+                    store.write_manifest(job)
+                except OSError as exc:
+                    core.eprint(f"could not journal the narration for {job.id}: {exc}")
