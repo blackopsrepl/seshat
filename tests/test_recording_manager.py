@@ -300,7 +300,7 @@ class RecordingIdTests(unittest.TestCase):
         }
         with patch.object(tts, "resolve_tts_engine", return_value=server.EdgeTtsEngine()):
             with patch.object(
-                narration, "perform_narration", return_value={"engine": "edge", "segment_count": 1}
+                narration, "perform_narration", return_value={"engine": "edge", "path": str(first.narrated_path), "segment_count": 1}
             ):
                 with patch.object(narration, "recording_duration_ms", return_value=9000.0):
                     with patch.object(
