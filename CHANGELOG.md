@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.4.0](https://github.com/blackopsrepl/seshat/compare/v0.3.0...v0.4.0) (2026-11-04)
+
+
+### Features
+
+* **render:** timeline-driven recording_render over the finalized master 1e68bdd
+
+
+### Bug Fixes
+
+* **render:** re-time the captured audio with the picture, and fail loudly on an empty trim 0c71ad7
+* **render:** stitch leaves the manager lock before it runs 4a40f4b
+
+
+### Documentation
+
+* recording_render, the window capture target, and the derived-variant contract on every doc surface f488ed5
+
 ## [0.3.0](https://github.com/blackopsrepl/seshat/compare/v0.2.0...v0.3.0) (2026-11-04)
 
 
