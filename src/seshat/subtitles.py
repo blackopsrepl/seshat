@@ -56,7 +56,11 @@ def escape_text(text: str) -> str:
 
 
 def build_ass_document(entries: list[dict[str, Any]], width: int, height: int) -> str:
-    """Build a styled ASS document with one ``Dialogue`` line per caption entry."""
+    """Build a styled ASS document with one ``Dialogue`` line per caption entry.
+
+    An entry may carry ``align: "top"`` (auto placement lifted it away from the
+    action at the bottom of the picture); the override tag wins over the style.
+    """
     safe_height = max(int(height), 1)
     font_size = max(24, round(safe_height * 0.045))
     margin = max(36, round(safe_height * 0.07))
@@ -70,14 +74,88 @@ def build_ass_document(entries: list[dict[str, Any]], width: int, height: int) -
         )
     ]
     for entry in entries:
+        text = escape_text(str(entry["text"]))
+        if entry.get("align") == "top":
+            text = "{\\an8}" + text
         lines.append(
             "Dialogue: 0,{start},{end},Caption,,0,0,0,,{text}".format(
                 start=format_timestamp(entry["start_ms"]),
                 end=format_timestamp(entry["end_ms"]),
-                text=escape_text(str(entry["text"])),
+                text=text,
             )
         )
     return "\n".join(lines) + "\n"
+
+
+def soft_caption_paths(
+    job: recording.RecordingJob, deliverable: Path, captions: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Write SRT and WebVTT sidecars beside a narrated deliverable.
+
+    Burn-in styling and portability are different facts: players, YouTube and
+    translators want the same timings as files, and an ffmpeg without libass
+    can still ship those. The naming follows the deliverable, so variants
+    carry their own sidecars.
+    """
+    stem = deliverable.with_suffix("")
+    written = []
+    for suffix, builder in ((".srt", build_srt_document), (".vtt", build_vtt_document)):
+        path = deliverable.with_name(stem.name + suffix)
+        _write_private(path, builder(captions))
+        written.append({"format": suffix.lstrip("."), "path": str(path)})
+    return written
+
+
+def _write_private(path: Path, document: str) -> None:
+    fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, recording.RECORDING_FILE_MODE)
+    try:
+        os.write(fd, document.encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
+def _srt_timestamp(milliseconds: float) -> str:
+    total = max(milliseconds, 0.0)
+    hours, remainder = divmod(total, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d},{int(millis):03d}"
+
+
+def _vtt_timestamp(milliseconds: float) -> str:
+    total = max(milliseconds, 0.0)
+    hours, remainder = divmod(total, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}.{int(millis):03d}"
+
+
+def _cue_position(entry: dict[str, Any]) -> str:
+    # WebVTT line:0 anchors the cue at the top of the frame, matching burn-in.
+    return "line:0" if entry.get("align") == "top" else ""
+
+
+def build_srt_document(captions: list[dict[str, Any]]) -> str:
+    blocks = []
+    for index, entry in enumerate(captions, 1):
+        blocks.append(
+            f"{index}\n{_srt_timestamp(entry['start_ms'])} --> "
+            f"{_srt_timestamp(entry['end_ms'])}\n{str(entry['text']).strip()}\n"
+        )
+    return "\n".join(blocks)
+
+
+def build_vtt_document(captions: list[dict[str, Any]]) -> str:
+    lines = ["WEBVTT", ""]
+    for entry in captions:
+        position = _cue_position(entry)
+        timing = f"{_vtt_timestamp(entry['start_ms'])} --> {_vtt_timestamp(entry['end_ms'])}"
+        if position:
+            timing += f"\n{position}"
+        lines.append(timing)
+        lines.append(str(entry["text"]).strip())
+        lines.append("")
+    return "\n".join(lines)
 
 
 def write_subtitle_file(workdir: Path, document: str) -> Path:

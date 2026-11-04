@@ -15,7 +15,8 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
 
 from . import core, lifecycle, narration, recording, store, timeline, tts
 
@@ -224,8 +225,9 @@ def narrate(
 ) -> None:
     try:
         narration_meta = narration.perform_narration(job, request, engine)
+        deliverable = Path(narration_meta["path"])
         summary = recording.validate_recording_artifact(
-            job, expect_audio=True, path=job.narrated_path
+            job, expect_audio=True, path=deliverable
         )
     except core.ToolError as exc:
         with manager._lock:
@@ -255,10 +257,10 @@ def narrate(
             job.result["events_beyond_media"] = events_beyond_media
             job.result["latest_event_ms"] = latest_event_ms
             try:
-                job.result["bytes"] = job.narrated_path.stat().st_size
+                job.result["bytes"] = deliverable.stat().st_size
             except OSError:
                 pass
-            job.result["path"] = str(job.narrated_path)
+            job.result["path"] = narration_meta["path"]
             job.result["master_path"] = str(job.artifact)
             job.result["audio_included"] = True
             job.result["narration"] = narration_meta

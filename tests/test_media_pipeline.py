@@ -49,7 +49,7 @@ class SineEngine(tts.TtsEngine):
     def __init__(self, length_override_ms: float | None = None) -> None:
         self.length_override_ms = length_override_ms
 
-    def synthesize(self, text: str, voice: str | None, out_path: Path) -> tts.TtsClip:
+    def synthesize(self, text: str, voice: str | None, out_path: Path, character: tts.TtsCharacter | None = None) -> tts.TtsClip:
         length_ms = self.length_override_ms or 500.0 + 100.0 * len(text)
         hz = 300 + (sum(text.encode()) % 40) * 10
         subprocess.run(

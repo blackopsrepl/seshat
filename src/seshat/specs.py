@@ -238,6 +238,19 @@ def tool_specs() -> list[dict[str, Any]]:
                                     "properties": {
                                         "event_id": {"type": "integer", "minimum": 1},
                                         "at_ms": {"type": "number", "minimum": 0},
+                                        "match": {
+                                            "type": "object",
+                                            "properties": {
+                                                "tool": {"type": "string"},
+                                                "payload": {"type": "object"},
+                                                "nth": {"type": "integer", "minimum": 1},
+                                            },
+                                            "additionalProperties": False,
+                                            "description": (
+                                                "Match one real event by tool and/or a payload "
+                                                "subset, so a script survives a re-record."
+                                            ),
+                                        },
                                     },
                                     "additionalProperties": False,
                                 },
@@ -283,7 +296,55 @@ def tool_specs() -> list[dict[str, Any]]:
                         "default": True,
                         "description": (
                             "Burn styled captions from the narration into the video "
-                            "(re-encodes the video). Set false to copy the video without captions."
+                            "(re-encodes the video); SRT/VTT sidecars are written "
+                            "either way. Set false to copy the video without captions."
+                        ),
+                    },
+                    "rate": {
+                        "type": "string",
+                        "default": "+0%",
+                        "description": "Voice rate as edge-tts accepts it, e.g. \"+10%\" or \"-5%\".",
+                    },
+                    "volume": {
+                        "type": "string",
+                        "default": "+0%",
+                        "description": "Voice volume as edge-tts accepts it.",
+                    },
+                    "pitch": {
+                        "type": "string",
+                        "default": "+0Hz",
+                        "description": "Voice pitch as edge-tts accepts it, e.g. \"+2Hz\".",
+                    },
+                    "length_scale": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 3.0,
+                        "default": 1.0,
+                        "description": "Piper voice pace (<1 faster, >1 slower).",
+                    },
+                    "position": {
+                        "type": "string",
+                        "enum": ["bottom", "top", "auto"],
+                        "default": "bottom",
+                        "description": (
+                            "Caption placement. auto lifts a caption to the top when the "
+                            "events in its window acted in the bottom third of the picture."
+                        ),
+                    },
+                    "variant": {
+                        "type": ["string", "null"],
+                        "description": (
+                            "Render a named variant (e.g. \"it\" for Italian narration) to "
+                            "<id>.<variant>.<fmt>; every render is rebuilt from the master."
+                        ),
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Synthesize and schedule without muxing or publishing: the "
+                            "answer carries every segment's duration and overruns, so a "
+                            "demonstration can be paced to the script before it is recorded."
                         ),
                     },
                 },

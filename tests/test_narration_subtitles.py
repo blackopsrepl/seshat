@@ -17,8 +17,10 @@ from support import completed_job, event
 
 class _FakeEngine:
     name = "edge"
+    default_voice = None
+    network = False
 
-    def synthesize(self, text: str, voice: str | None, out_path: Path) -> tts.TtsClip:
+    def synthesize(self, text: str, voice: str | None, out_path: Path, character: tts.TtsCharacter | None = None) -> tts.TtsClip:
         out_path.write_bytes(b"audio")
         return tts.TtsClip(out_path, 1000.0, 100.0, [{"text": "x", "start_ms": 0, "end_ms": 1}])
 
@@ -182,6 +184,76 @@ class PerformNarrationSubtitlesTests(unittest.TestCase):
         self.assertFalse(metadata["subtitles"])
         mux = captured[-1]
         self.assertEqual(mux[mux.index("-c:v") + 1], "copy")
+
+
+
+class PhraseCaptionTests(unittest.TestCase):
+    """Captions are phrases timed to the engine's cues, never solid blocks."""
+
+    def test_cue_matched_phrases_take_the_cue_window(self) -> None:
+        cues = [
+            {"text": "First sentence is seen.", "start_ms": 200.0, "end_ms": 1800.0},
+            {"text": "Second sentence is heard.", "start_ms": 1800.0, "end_ms": 3000.0},
+        ]
+        text = "First sentence is seen. Second sentence is heard."
+        entries = server.scheduling.phrase_caption_entries(
+            text, 1000.0, 2800.0, 100.0, 1.0, cues
+        )
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["text"], "First sentence is seen.")
+        # The cue window maps through the lead-silence trim (200-100) onto the
+        # segment's start at 1000 ms.
+        self.assertEqual(entries[0]["start_ms"], 1100.0)
+        self.assertEqual(entries[0]["end_ms"], 2700.0)
+        self.assertEqual(entries[1]["text"], "Second sentence is heard.")
+
+    def test_long_text_splits_and_shares_time_proportionally(self) -> None:
+        long_text = " ".join(["word"] * 40)
+        entries = server.scheduling.phrase_caption_entries(
+            long_text, 0.0, 2000.0, 0.0, 1.0, []
+        )
+        self.assertGreater(len(entries), 1)
+        self.assertEqual(entries[0]["start_ms"], 0.0)
+        self.assertGreater(entries[-1]["end_ms"], entries[0]["end_ms"])
+        self.assertTrue(all("word" in e["text"] for e in entries))
+
+    def test_split_phrases_respects_a_broad_limit(self) -> None:
+        phrases = server.scheduling.split_phrases("A short one. And another sentence here.")
+        self.assertEqual(phrases, ["A short one.", "And another sentence here."])
+
+    def test_tempo_scales_cue_timing(self) -> None:
+        cues = [{"text": "Sentence.", "start_ms": 1000.0, "end_ms": 2000.0}]
+        entries = server.scheduling.phrase_caption_entries(
+            "Sentence.", 0.0, 1000.0, 0.0, 2.0, cues
+        )
+        self.assertEqual(entries[0]["start_ms"], 500.0)
+
+    def test_top_alignment_and_sidecars(self) -> None:
+        captions = [
+            {"start_ms": 1000.0, "end_ms": 3000.0, "text": "Bottom one", "index": 1},
+            {"start_ms": 3000.0, "end_ms": 4000.0, "text": "Top one", "index": 2, "align": "top"},
+        ]
+        document = subtitles.build_ass_document(captions, 1920, 1080)
+        self.assertIn("Dialogue: 0,0:00:01.00,0:00:03.00,Caption,,0,0,0,,Bottom one", document)
+        self.assertIn("Dialogue: 0,0:00:03.00,0:00:04.00,Caption,,0,0,0,,{\\an8}Top one", document)
+        srt = subtitles.build_srt_document(captions)
+        self.assertIn("1\n00:00:01,000 --> 00:00:03,000\nBottom one", srt)
+        vtt = subtitles.build_vtt_document(captions)
+        self.assertIn("00:00:03.000 --> 00:00:04.000\nline:0\nTop one", vtt)
+
+    def test_soft_sidecars_land_beside_the_deliverable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            deliverable = Path(tmp) / "abc123.narrated.mp4"
+            deliverable.write_bytes(b"")
+            from types import SimpleNamespace as _NS
+            job = _NS(id="abc123", fmt="mp4")
+            written = subtitles.soft_caption_paths(
+                job, deliverable,
+                [{"start_ms": 0, "end_ms": 900.0, "text": "Hi", "index": 1}],
+            )
+            names = {w["format"]: Path(w["path"]).name for w in written}
+            self.assertEqual(names, {"srt": "abc123.narrated.srt", "vtt": "abc123.narrated.vtt"})
+            self.assertIn("00:00:00,000 --> 00:00:00,900", Path(written[0]["path"]).read_text())
 
 
 if __name__ == "__main__":

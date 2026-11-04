@@ -147,7 +147,7 @@ class AnchorResolutionTests(unittest.TestCase):
             self.job,
             server.recording_capture_ms(self.job),
         )
-        anchored = server.resolve_segment_anchors(request, self.job)
+        anchored = server.resolve_segment_anchors(request)
         self.assertEqual(anchored[0][1], 4250.0)
 
     def test_segments_are_sorted_by_resolved_time(self) -> None:
@@ -161,7 +161,7 @@ class AnchorResolutionTests(unittest.TestCase):
             self.job,
             server.recording_capture_ms(self.job),
         )
-        anchored = server.resolve_segment_anchors(request, self.job)
+        anchored = server.resolve_segment_anchors(request)
         self.assertEqual([item[0].text for item in anchored], ["earlier", "later"])
 
 
@@ -169,8 +169,8 @@ class AlignmentScheduleTests(unittest.TestCase):
     def make_request(self, fit: str = "natural", tail_ms: float = 300.0) -> server.NarrationRequest:
         return server.NarrationRequest(
             segments=[
-                server.NarrationSegment(1, 1, None, "a"),
-                server.NarrationSegment(2, 2, None, "b"),
+                server.NarrationSegment(1, 1, None, None, 1000.0, "a"),
+                server.NarrationSegment(2, 2, None, None, 2000.0, "b"),
             ],
             engine="edge",
             voice=None,
@@ -181,8 +181,8 @@ class AlignmentScheduleTests(unittest.TestCase):
 
     def test_natural_schedule_pushes_later_segments_forward(self) -> None:
         anchored = [
-            (server.NarrationSegment(1, 1, None, "a"), 1000.0),
-            (server.NarrationSegment(2, 2, None, "b"), 1500.0),
+            (server.NarrationSegment(1, 1, None, None, 1000.0, "a"), 1000.0),
+            (server.NarrationSegment(2, 2, None, None, 2000.0, "b"), 1500.0),
         ]
         clips = {1: clip("/tmp/1.mp3", 2000.0), 2: clip("/tmp/2.mp3", 500.0)}
         schedule = server.schedule_narration(anchored, clips, 10000.0, self.make_request())
@@ -194,15 +194,15 @@ class AlignmentScheduleTests(unittest.TestCase):
         self.assertEqual(schedule.total_ms, 10000.0)
 
     def test_lead_silence_is_removed_from_clip_length(self) -> None:
-        anchored = [(server.NarrationSegment(1, 1, None, "a"), 500.0)]
+        anchored = [(server.NarrationSegment(1, 1, None, None, 1000.0, "a"), 500.0)]
         clips = {1: clip("/tmp/1.mp3", 2000.0, lead_ms=400.0)}
         schedule = server.schedule_narration(anchored, clips, 10000.0, self.make_request())
         self.assertEqual(schedule.segments[0].clip_ms, 1600.0)
 
     def test_compress_fit_uses_tempo_to_avoid_overrun(self) -> None:
         anchored = [
-            (server.NarrationSegment(1, 1, None, "a"), 0.0),
-            (server.NarrationSegment(2, 2, None, "b"), 1000.0),
+            (server.NarrationSegment(1, 1, None, None, 1000.0, "a"), 0.0),
+            (server.NarrationSegment(2, 2, None, None, 2000.0, "b"), 1000.0),
         ]
         clips = {1: clip("/tmp/1.mp3", 3000.0), 2: clip("/tmp/2.mp3", 200.0)}
         schedule = server.schedule_narration(
@@ -216,12 +216,79 @@ class AlignmentScheduleTests(unittest.TestCase):
         )
 
     def test_tail_extends_total_when_speech_outlasts_capture(self) -> None:
-        anchored = [(server.NarrationSegment(1, 1, None, "a"), 900.0)]
+        anchored = [(server.NarrationSegment(1, 1, None, None, 1000.0, "a"), 900.0)]
         clips = {1: clip("/tmp/1.mp3", 5000.0)}
         schedule = server.schedule_narration(
             anchored, clips, 1000.0, self.make_request(tail_ms=250.0)
         )
         self.assertEqual(schedule.total_ms, 900.0 + 5000.0 + 250.0)
 
+
+class ContentAnchorTests(unittest.TestCase):
+    """A match anchor resolves to exactly one real event, so scripts survive re-records."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.job = completed_job(
+            self.tmp.name, capture_seconds=10.0,
+            events=[
+                event(1000.0, tool="click"),
+                event(3000.0, tool="click"),
+                event(5000.0, tool="write"),
+            ],
+        )
+        # events() writes payload {}, give the third a payload via direct patch:
+        self.job.events[2]["payload"] = {"text": "hello", "y": 700.0}
+
+    def request(self, anchor: dict, duration_ms: float = 9000.0):
+        return server.parse_narration_arguments(
+            {"segments": [{"anchor": anchor, "text": "t"}]},
+            self.job,
+            duration_ms,
+        )
+
+    def test_matches_by_tool(self) -> None:
+        request = self.request({"match": {"tool": "write"}})
+        self.assertEqual(request.segments[0].resolved_ms, 5000.0)
+
+    def test_matches_by_tool_and_payload_subset_with_nth(self) -> None:
+        request = self.request({"match": {"tool": "click", "payload": {}, "nth": 2}})
+        self.assertEqual(request.segments[0].resolved_ms, 3000.0)
+
+    def test_payload_subset_must_match_values(self) -> None:
+        with self.assertRaises(server.ToolError) as ctx:
+            self.request({"match": {"payload": {"text": "absent"}}})
+        self.assertIn("no event matching", str(ctx.exception))
+
+    def test_nth_beyond_candidates_names_the_count(self) -> None:
+        with self.assertRaises(server.ToolError) as ctx:
+            self.request({"match": {"tool": "click", "nth": 3}})
+        self.assertIn("exceeds the 2 matching", str(ctx.exception))
+
+    def test_two_anchor_kinds_are_refused(self) -> None:
+        with self.assertRaises(server.ToolError) as ctx:
+            self.request({"at_ms": 100, "match": {"tool": "click"}})
+        self.assertIn("exactly one of", str(ctx.exception))
+
+    def test_the_match_past_the_picture_is_refused(self) -> None:
+        with self.assertRaises(server.ToolError) as ctx:
+            self.request({"match": {"tool": "write"}}, duration_ms=4000.0)
+        self.assertIn("past the end of the playable video", str(ctx.exception))
+
+    def test_variant_and_position_are_validated(self) -> None:
+        with self.assertRaises(server.ToolError):
+            return server.parse_narration_arguments(
+                {"segments": [{"anchor": {"at_ms": 0}, "text": "t"}], "variant": "x y"},
+                self.job, 9000.0,
+            )
+        with self.assertRaises(server.ToolError):
+            return server.parse_narration_arguments(
+                {"segments": [{"anchor": {"at_ms": 0}, "text": "t"}], "position": "left"},
+                self.job, 9000.0,
+            )
+
+
 if __name__ == "__main__":
+
     unittest.main()

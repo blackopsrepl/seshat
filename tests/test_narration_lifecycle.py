@@ -61,7 +61,7 @@ class VoiceoverLifecycleTests(unittest.TestCase):
 
         def fake_perform(j, request, engine):
             j.narrated_path.write_bytes(b"narrated")
-            return {"engine": engine.name, "segment_count": len(request.segments)}
+            return {"engine": engine.name, "path": str(j.narrated_path), "segment_count": len(request.segments)}
 
         fresh = {
             "codec": "av1",
@@ -116,7 +116,7 @@ class VoiceoverLifecycleTests(unittest.TestCase):
 
         def fake_perform(j, request, engine):
             j.narrated_path.write_bytes(b"narrated")
-            return {"engine": engine.name}
+            return {"engine": engine.name, "path": str(j.narrated_path)}
 
         fresh = {
             "codec": "av1", "container": "webm", "mime_type": "video/webm",
@@ -133,7 +133,8 @@ class VoiceoverLifecycleTests(unittest.TestCase):
         lines = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(lines[0]["arguments"], request_arguments)
         manifest = json.loads((state / "seshat" / "takes" / job.id / "take.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["narration"], {"engine": "edge"})
+        self.assertEqual(manifest["narration"]["engine"], "edge")
+        self.assertTrue(manifest["narration"]["path"].endswith("narrated.webm"))
 
 
 class TimelineIngestionTests(unittest.TestCase):

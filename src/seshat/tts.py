@@ -39,6 +39,13 @@ NARRATION_DUCK_THRESHOLD = 0.03
 NARRATION_DUCK_RATIO = 4.0
 NARRATION_DUCK_ATTACK_MS = 20
 NARRATION_DUCK_RELEASE_MS = 250
+# The whole mix (voice plus ducked bed) is normalized to a podcast-grade
+# integrated loudness, so takes are level-consistent across a channel.
+NARRATION_LOUDNESS_TARGET = -16.0
+NARRATION_LOUDNESS_TP = -1.5
+NARRATION_LOUDNESS_LRA = 11.0
+# Voice-character bounds passed to the engine verbatim in its own syntax.
+NARRATION_EDGE_RATE_DEFAULT = "+0%"
 
 
 @dataclass
@@ -47,6 +54,19 @@ class TtsClip:
     duration_ms: float
     lead_silence_ms: float
     words: list[dict[str, Any]]
+
+
+@dataclass
+class TtsCharacter:
+    """How the voice sounds: rate, volume, pitch for edge; length_scale for piper."""
+
+    rate: str = "+0%"
+    volume: str = "+0%"
+    pitch: str = "+0Hz"
+    length_scale: float = 1.0
+
+    def signature(self) -> str:
+        return f"rate={self.rate}|volume={self.volume}|pitch={self.pitch}|scale={self.length_scale}"
 
 
 def parse_vtt_word_boundaries(text: str) -> list[dict[str, Any]]:
@@ -119,7 +139,7 @@ class TtsEngine:
     default_voice: str | None = None
     network = False
 
-    def synthesize(self, text: str, voice: str | None, out_path: Path) -> TtsClip:
+    def synthesize(self, text: str, voice: str | None, out_path: Path, character: TtsCharacter | None = None) -> TtsClip:
         raise NotImplementedError
 
 
@@ -128,7 +148,8 @@ class PiperTtsEngine(TtsEngine):
     default_voice = None
     network = False
 
-    def synthesize(self, text: str, voice: str | None, out_path: Path) -> TtsClip:
+    def synthesize(self, text: str, voice: str | None, out_path: Path, character: TtsCharacter | None = None) -> TtsClip:
+        character = character or TtsCharacter()
         core.require_binaries([NARRATION_PIPER_COMMAND, "ffmpeg", "ffprobe"])
         model = voice or os.environ.get(NARRATION_PIPER_MODEL_ENV)
         if not model:
@@ -138,7 +159,11 @@ class PiperTtsEngine(TtsEngine):
         if not Path(model).is_file():
             raise core.ToolError(f"piper model not found: {model}")
         core.run_command(
-            [NARRATION_PIPER_COMMAND, "--model", model, "--output_file", str(out_path)],
+            [
+                NARRATION_PIPER_COMMAND, "--model", model,
+                "--length_scale", f"{character.length_scale:g}",
+                "--output_file", str(out_path),
+            ],
             input_text=text + "\n",
             timeout=NARRATION_SYNTH_TIMEOUT_SECONDS,
         )
@@ -155,13 +180,17 @@ class EdgeTtsEngine(TtsEngine):
     default_voice = NARRATION_EDGE_DEFAULT_VOICE
     network = True
 
-    def synthesize(self, text: str, voice: str | None, out_path: Path) -> TtsClip:
+    def synthesize(self, text: str, voice: str | None, out_path: Path, character: TtsCharacter | None = None) -> TtsClip:
+        character = character or TtsCharacter()
         core.require_binaries([NARRATION_EDGE_COMMAND, "ffmpeg", "ffprobe"])
         vtt_path = out_path.with_suffix(".vtt")
         argv = [
             NARRATION_EDGE_COMMAND,
             "--text",
             text,
+            "--rate", character.rate,
+            "--volume", character.volume,
+            "--pitch", character.pitch,
             "--write-media",
             str(out_path),
             "--write-subtitles",
