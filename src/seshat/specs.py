@@ -21,9 +21,9 @@ def tool_specs() -> list[dict[str, Any]]:
         {
             "name": "recording_start",
             "description": (
-                "Start recording an active output (or a region within it) into a silent "
-                "artifact: H.264 MP4 by default, or AV1 WebM, or a constrained GIF "
-                "fallback. Returns immediately; call recording_stop to finish, then poll "
+                "Start recording an active output (or a region within it): H.264 MP4 "
+                "by default, or AV1 WebM, or a constrained GIF fallback. Returns "
+                "immediately; call recording_stop to finish, then poll "
                 "recording_status until the phase is completed or failed. The pointer "
                 "cursor is always included. Narration anchors come from the timeline "
                 "streams ingested for this take, so the tool server that drives the "
@@ -56,8 +56,8 @@ def tool_specs() -> list[dict[str, Any]]:
                         "enum": list(recording.RECORDING_FORMATS),
                         "default": "mp4",
                         "description": (
-                            "mp4: silent H.264 MP4 at 30 fps (default, widest compatibility); "
-                            "webm: silent AV1 WebM at 30 fps; gif: constrained fallback at "
+                            "mp4: H.264 MP4 at 30 fps (default, widest compatibility); "
+                            "webm: AV1 WebM at 30 fps; gif: constrained fallback at "
                             "12 fps, 960 px maximum width."
                         ),
                     },
@@ -71,9 +71,10 @@ def tool_specs() -> list[dict[str, Any]]:
                             "\"monitor\" records the desktop's default output (application "
                             "and system sound); \"mic\" records the host's default "
                             "microphone input; \"auto\" is monitor when a default sink is "
-                            "resolvable and mic otherwise. Ignored for gif (GIF cannot "
-                            "carry audio). Capturing with a narration added later puts "
-                            "speech on top of this track."
+                            "resolvable and mic otherwise. Refused for gif (GIF cannot "
+                            "carry audio; the tool errors rather than ignoring it). "
+                            "Capturing with a narration added later puts "
+                            "speech on top of this track (ducked, mixed into one stream)."
                         ),
                     },
                     "max_duration_seconds": {

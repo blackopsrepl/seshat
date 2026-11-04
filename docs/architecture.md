@@ -37,8 +37,9 @@ Corollary rules that fall out of the boundary:
   the audio server exactly the way capture listens to the compositor: an
   opt-in `audio=` mode on `recording_start` resolves one PulseAudio source (the
   default sink's monitor for the desktop's own sound, the default input for
-  `mic`) and hands it to `wf-recorder -a`. Narration later is a synthesized
-  voice layered on top, never a replacement of the captured track.
+  `mic`) and hands it to `wf-recorder -a`. Narration later mixes the captured
+  track under the synthesized voice, ducked while the voice speaks — both stay
+  audible; the master is never rewritten.
 
 ## Layers
 
@@ -90,8 +91,13 @@ completed ──recording_voiceover──> narrating ──> completed   (failur
 - A failed capture deletes the artifact and keeps the intermediate, candidate, and
   log when present so the cause is inspectable. `SIGKILL` and non-zero recorder
   exits are failures and never enter finalization.
-- A failed narration leaves the previous artifact untouched: the narrated file is
-  written to a `.part` path and validated before `os.replace`.
+- A failed narration leaves the master untouched: the deliverable is written to a
+  `.part` path and validated before `os.replace` onto the narrated deliverable.
+  Every narration builds from the master, so re-narrating never compounds
+  captions or encodes — and a take recorded with audio keeps its captured track
+  as the ducked bed under the voice. When the voice outlasts the picture, the
+  picture is extended with cloned frames instead of carrying speech past the last
+  frame.
 
 ## Lifecycle facts and one picture
 

@@ -70,6 +70,14 @@ recording_voiceover(segments=[
 recording_status()   # poll until completed | failed
 ```
 
+- Anchors are always the master's picture, so the same script can be narrated
+  again after editing: the deliverable lands at `<id>.narrated.<fmt>` and the
+  master never changes. Re-narration never compounds captions.
+- A take recorded with `audio=monitor|mic` keeps its desktop sound: it is ducked
+  under the voice and mixed with it in the deliverable's single audio stream.
+- If the voice outlasts the picture, the picture is extended with cloned frames
+  (`narration.extended_ms` in the result) instead of speech running past the last
+  frame.
 - `fit="compress"` time-compresses a segment so it cannot run into the next
   anchor. Use it when the prose is longer than the gap it sits in.
 - `subtitles=true` (default) burns ASS captions and therefore re-encodes the

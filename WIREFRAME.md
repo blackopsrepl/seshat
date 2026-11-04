@@ -59,6 +59,7 @@ A completed summary separates lifecycle and media facts:
 | `media_duration_seconds` | playable extent of the video stream (container as fallback) |
 | `latest_event_ms` | furthest ingested event, recording-relative; `null` when there are none |
 | `events_beyond_media` | ingested events past the playable extent, i.e. unusable as anchors |
+| `path` / `master_path` | the current deliverable and the finalized capture it was built from; narration changes only `path` |
 
 ### recording_timeline
 
@@ -82,7 +83,7 @@ next to the artifact as `<id>.timeline.json` on completion.
 segments: [{anchor: {event_id: n} | {at_ms: n}, text: "..."}]   required
 engine: "auto" | "edge" | "piper"      default auto (edge preferred, then piper)
 voice: "<engine voice>"                optional
-offset_ms: number                      default 0, auto-shifts by genre/tone preferences
+offset_ms: number                      default 0, shifts every resolved anchor
 fit: "natural" | "compress"            default natural
 tail_ms: number                        default 300, max 2000
 subtitles: boolean                     default true
@@ -97,11 +98,15 @@ unknown keys, and non-boolean `subtitles`. Runs asynchronously as
 the artifact intact and the reason in `result.narration.error`. Caption burn-in
 additionally requires an ffmpeg built with libass (the `subtitles` filter); a
 build without one fails narration exactly this way, and the take can be
-re-narrated with `subtitles=false`. Narration replaces the artifact's single
-audio stream with a mix of whatever the take already carries: over a silent
-artifact the mixed stream is the voice alone, over an `audio=monitor|mic`
-artifact the captured desktop sound and the synthesized voice are audible
-together in that one stream. `seshat_info.audio` reports `default_sink`,
+re-narrated with `subtitles=false`. Narration always builds from the take's
+finalized master and republishes a `<id>.narrated.<fmt>` deliverable, so
+re-narration never compounds captions or generations; `recording_status`
+reports `path` (the current deliverable) and `master_path`. A take recorded with
+`audio=monitor|mic` keeps its own sound: the track builder ducks it under the
+voice (sidechaincompress) and mixes both into the deliverable's single audio
+stream; over a silent master the stream is the voice alone. A schedule that
+runs past the master's extent extends the picture with cloned frames (`tpad`),
+reported as `narration.extended_ms`. `seshat_info.audio` reports `default_sink`,
 `default_source` and `monitor_source` (what `audio="monitor"` resolves to), or
 an `error` field on a host without a usable audio server.
 
@@ -109,7 +114,7 @@ an `error` field on a host without a usable audio server.
 
 ```
 threshold: number     default 0.30 (SCENE_DEFAULT_THRESHOLD)
-max_scenes: integer   default 12, max SCENE_MAX_CUTS
+max_scenes: integer   default 40, max SCENE_MAX_CUTS
 ocr: boolean          default false, needs tesseract
 ```
 
@@ -144,12 +149,15 @@ source.
   artifact validated for exactly that shape. Narration later re-adds its own
   speech-encoded stream per the narrated contract below.
 - Narrated artifact contract: exactly one video stream **and** exactly one audio
-  stream — MP4 = AAC 128k, WebM = Opus 96k, both 48 kHz stereo. The middle of the
-  take is written to `<id>.narrated.<fmt>.part` and moved into place only after
-  validation.
+  stream — MP4 = AAC 128k, WebM = Opus 96k, both 48 kHz stereo. The deliverable
+  is written to `<id>.narrated.<fmt>.part` and moved into place only after
+  validation; the finalized master at `<id>.<fmt>` is never rewritten, and every
+  narration starts from it again.
 - Error contract: every expected failure is an MCP tool error (`isError: true`)
-  with a specific message. `server.py` logs unexpected exceptions to stderr and
-  returns a generic `internal tool error`.
+  with a specific message, and every tool rejects argument keys it does not
+  declare. `server.py` answers `ping`, answers non-object messages and non-object
+  arguments as protocol errors (-32600/-32602) instead of dying, logs unexpected
+  exceptions to stderr, and returns a generic `internal tool error`.
 - `--doctor` and `--self-test` print JSON diagnostics; neither records.
 - `make integration` records the live screen for a real deadline and asserts that
   the take auto-stopped, that the recorder exited cleanly, that the playable
