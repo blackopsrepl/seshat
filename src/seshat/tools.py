@@ -13,13 +13,14 @@ from . import core, manager, outputs, recording, session, streams, tts
 from .version import SERVER_NAME, SERVER_VERSION
 
 
-def tool_seshat_info(_: dict[str, Any]) -> list[dict[str, str]]:
+def tool_seshat_info(arguments: dict[str, Any]) -> list[dict[str, str]]:
     """Report what this host can record and narrate with, and where it writes.
 
     Deliberately forgiving: this is the tool an operator reaches for when a take
     misbehaves, so an unusable session is reported as a field instead of failing
     the whole call.
     """
+    core.reject_unknown(arguments, (), "seshat_info")
     outputs_report: list[dict[str, Any]] | None = None
     outputs_error: str | None = None
     try:
@@ -83,8 +84,8 @@ def tool_recording_status(arguments: dict[str, Any]) -> list[dict[str, str]]:
     return core.json_text(manager.RECORDINGS.status(arguments))
 
 
-def tool_recording_stop(_: dict[str, Any]) -> list[dict[str, str]]:
-    return core.json_text(manager.RECORDINGS.stop())
+def tool_recording_stop(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    return core.json_text(manager.RECORDINGS.stop(arguments))
 
 
 def tool_recording_timeline(arguments: dict[str, Any]) -> list[dict[str, str]]:

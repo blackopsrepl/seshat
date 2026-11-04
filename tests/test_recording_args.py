@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, media, narration, outputs, recording, server, tts
+from seshat import core, manager as manager_module, media, narration, outputs, recording, server, tools, tts
 
 from support import *
 class StrictIntTests(unittest.TestCase):
@@ -365,6 +365,72 @@ class FinalizeArgvTests(unittest.TestCase):
         narrow_joined = " ".join(narrow)
         self.assertNotIn("scale=960", narrow_joined)
         self.assertNotIn("lanczos", narrow_joined)
+
+
+class UnknownArgumentTests(unittest.TestCase):
+    """Every tool rejects argument keys it does not declare, loudly.
+
+    recording_start used to ignore a typo'd key (``fromat``) and take the
+    default format, and it accepted a hidden ``audio_source`` argument its
+    schema never declared. ``bool()`` coercion also turned ocr=\"false\" into
+    OCR enabled.
+    """
+
+    def test_start_rejects_unknown_keys_before_touching_the_session(self) -> None:
+        with self.assertRaises(server.ToolError) as ctx:
+            server.RECORDINGS.start({"fromat": "gif"})
+        self.assertIn("unknown argument(s) for recording_start: fromat", str(ctx.exception))
+
+    def test_start_rejects_the_removed_audio_source_argument(self) -> None:
+        with self.assertRaises(server.ToolError) as ctx:
+            server.RECORDINGS.start({"audio_source": "monitor"})
+        self.assertIn("audio_source", str(ctx.exception))
+
+    def test_declared_start_arguments_are_the_whole_surface(self) -> None:
+        self.assertEqual(
+            set(recording.RECORDING_ARGUMENTS),
+            {"format", "audio", "output", "region", "max_duration_seconds", "timeline_sources"},
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": tmpdir}):
+                with patch.object(outputs, "get_outputs", return_value=single_output()):
+                    job = recording.new_recording_job(
+                        {
+                            "format": "webm",
+                            "audio": "off",
+                            "output": "DP-1",
+                            "region": None,
+                            "max_duration_seconds": 30,
+                            "timeline_sources": None,
+                        }
+                    )
+        self.assertEqual(job.fmt, "webm")
+        self.assertEqual(job.audio, "off")
+
+    def test_every_other_tool_rejects_unknown_keys(self) -> None:
+        manager = manager_module.RecordingManager()
+        with self.assertRaises(server.ToolError) as ctx:
+            manager.status({"ide": "x"})
+        self.assertIn("recording_status: ide", str(ctx.exception))
+        with self.assertRaises(server.ToolError) as ctx:
+            manager.timeline({"ide": "x"})
+        self.assertIn("recording_timeline: ide", str(ctx.exception))
+        with self.assertRaises(server.ToolError) as ctx:
+            manager.stop({"force": True})
+        self.assertIn("recording_stop: force", str(ctx.exception))
+        with self.assertRaises(server.ToolError) as ctx:
+            manager.scenes({"ocr2": True})
+        self.assertIn("recording_scenes: ocr2", str(ctx.exception))
+        with self.assertRaises(server.ToolError) as ctx:
+            tools.tool_seshat_info({"x": 1})
+        self.assertIn("seshat_info: x", str(ctx.exception))
+
+    def test_ocr_requires_a_boolean(self) -> None:
+        manager = manager_module.RecordingManager()
+        with self.assertRaises(server.ToolError) as ctx:
+            manager.scenes({"ocr": "false"})
+        self.assertEqual(str(ctx.exception), "ocr must be a boolean")
+
 
 if __name__ == "__main__":
     unittest.main()

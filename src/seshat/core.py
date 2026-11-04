@@ -136,5 +136,19 @@ def strict_number(
     return number
 
 
+def reject_unknown(
+    arguments: dict[str, Any], allowed: tuple[str, ...] | set[str], tool: str
+) -> None:
+    """Fail an argument set that names keys the tool does not declare.
+
+    A silently ignored typo — ``fromat`` for ``format`` — takes every default
+    and produces the wrong take; loud rejection names the key instead. Truth
+    tables differ per tool; every tool calls this once at the top.
+    """
+    unknown = set(arguments) - set(allowed)
+    if unknown:
+        raise ToolError(f"unknown argument(s) for {tool}: {', '.join(sorted(unknown))}")
+
+
 def json_text(value: Any) -> list[dict[str, str]]:
     return [{"type": "text", "text": json.dumps(value, indent=2, sort_keys=True)}]

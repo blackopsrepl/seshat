@@ -17,6 +17,14 @@ RECORDING_PACTL_TIMEOUT_SECONDS = 1.0
 RECORDING_FORMATS = ("mp4", "webm", "gif")
 RECORDING_AUDIO_MODES = ("auto", "monitor", "mic", "off")
 RECORDING_AUDIO_DEFAULT_MODE = "off"
+RECORDING_ARGUMENTS = (
+    "format",
+    "audio",
+    "output",
+    "region",
+    "max_duration_seconds",
+    "timeline_sources",
+)
 RECORDING_MIME_TYPES = {"mp4": "video/mp4", "webm": "video/webm", "gif": "image/gif"}
 RECORDING_MAX_DURATION_SECONDS = {"mp4": 300.0, "webm": 300.0, "gif": 15.0}
 RECORDING_DEFAULT_DURATION_SECONDS = {"mp4": 60.0, "webm": 60.0, "gif": 15.0}
@@ -85,25 +93,6 @@ def parse_recording_audio(value: Any) -> str:
 
 def wants_audio(mode: str | None) -> bool:
     return mode in ("auto", "monitor", "mic")
-
-
-def parse_recording_audio_source(value: Any) -> str | None:
-    """Optional ``audio_source`` argument: which PulseAudio source to capture.
-
-    ``"monitor"`` means the default sink's monitor of the default output — the
-    desktop's own sound (application and system). ``None`` means the host's
-    default source, which PulseAudio resolves to the default input device: a
-    microphone.
-    """
-    if value is None:
-        return None
-    if value == "monitor":
-        return "monitor"
-    raise core.ToolError(
-        'audio_source must be "monitor" or null (any other device string would '
-        "have to name a source that changes across hosts; use audio=\"mic\" for "
-        "the host default input)"
-    )
 
 
 def parse_max_duration(value: Any, fmt: str) -> float:
@@ -229,22 +218,22 @@ RECORDING_LOG_TAIL_BYTES = 500
 
 
 def resolve_audio_source(job_arguments: dict[str, Any], fmt: str) -> tuple[str, str | None]:
-    """Resolve ``audio``/``audio_source`` into (mode, concrete PulseAudio source).
+    """Resolve ``audio`` into (mode, concrete PulseAudio source).
 
-    Returns mode ``"mic"`` with source None (the recorder's default source), and
-    mode ``"monitor"`` with the default sink's monitor source name. ``"off"``
-    never queries the audio subsystem, so it works on a host with no audio at
-    all. ``fmt == "gif"`` refuses every audio mode: GIF cannot carry audio.
+    Returns mode ``"monitor"`` with the default sink's monitor source name and
+    mode ``"mic"`` with source None (the recorder's default source, PulseAudio's
+    default input). ``"off"`` never queries the audio subsystem, so it works on
+    a host with no audio at all. ``fmt == "gif"`` refuses every audio mode:
+    GIF cannot carry audio.
     """
     mode = parse_recording_audio(job_arguments.get("audio"))
-    hint = parse_recording_audio_source(job_arguments.get("audio_source"))
     if not wants_audio(mode):
         return mode, None
     if fmt == "gif":
         raise core.ToolError(
             'gif cannot carry audio; record format="mp4" or format="webm" for audio capture'
         )
-    if hint == "monitor" or (hint is None and mode in ("auto", "monitor")):
+    if mode in ("auto", "monitor"):
         return mode, resolve_default_monitor_source()
     return mode, None
 

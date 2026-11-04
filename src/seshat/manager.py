@@ -64,6 +64,7 @@ class RecordingManager:
     # -- lifecycle -------------------------------------------------------
 
     def start(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        core.reject_unknown(arguments, recording.RECORDING_ARGUMENTS, "recording_start")
         core.require_binaries(["wf-recorder", "ffmpeg", "ffprobe"])
         with self._lock:
             job = self._job
@@ -106,6 +107,7 @@ class RecordingManager:
             return self._summary(new_job)
 
     def status(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        core.reject_unknown(arguments or {}, ("id",), "recording_status")
         with self._lock:
             job = self._select((arguments or {}).get("id"))
             if job is None:
@@ -137,7 +139,8 @@ class RecordingManager:
                         job.thread.start()
             return self._summary(job)
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        core.reject_unknown(arguments or {}, (), "recording_stop")
         with self._lock:
             job = self._job
             if job is None or job.phase != "recording":
@@ -170,6 +173,7 @@ class RecordingManager:
         job.stream_report = [read.report() for read in reads]
 
     def timeline(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        core.reject_unknown(arguments or {}, ("id",), "recording_timeline")
         with self._lock:
             job = self._select((arguments or {}).get("id"))
             if job is None:
@@ -221,7 +225,12 @@ class RecordingManager:
         max_scenes = core.strict_int(arguments.get("max_scenes", scenes.SCENE_DEFAULT_MAX), "max_scenes")
         if max_scenes < 1 or max_scenes > scenes.SCENE_MAX_CUTS:
             raise core.ToolError(f"max_scenes must be between 1 and {scenes.SCENE_MAX_CUTS}")
-        ocr = bool(arguments.get("ocr", False))
+        ocr = arguments.get("ocr", False)
+        if not isinstance(ocr, bool):
+            raise core.ToolError("ocr must be a boolean")
+        core.reject_unknown(
+            arguments, ("id", "threshold", "max_scenes", "ocr"), "recording_scenes"
+        )
         with self._lock:
             job = self._select(arguments.get("id"))
             if job is None or job.phase != "completed":

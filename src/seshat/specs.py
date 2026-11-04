@@ -62,7 +62,7 @@ def tool_specs() -> list[dict[str, Any]]:
                         ),
                     },
                     "audio": {
-                        "type": "string",
+                        "type": ["string", "null"],
                         "enum": ["auto", "monitor", "mic", "off", None],
                         "default": "off",
                         "description": (
