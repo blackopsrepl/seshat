@@ -152,9 +152,18 @@ def adopt(
     if job.narrated_path is not None and job.narrated_path.exists():
         moves.append((job.narrated_path, directory / job.narrated_path.name))
     for source, destination in moves:
-        if source.is_file():
+        if not source.is_file():
+            continue
+        try:
             os.replace(source, destination)
-            os.chmod(destination, recording.RECORDING_FILE_MODE)
+        except OSError:
+            # The runtime dir is tmpfs and the store usually is not: a move
+            # across the device boundary must land through a private copy.
+            staging = destination.with_name(destination.name + ".adopt")
+            shutil.copy2(source, staging)
+            os.replace(staging, destination)
+            source.unlink(missing_ok=True)
+        os.chmod(destination, recording.RECORDING_FILE_MODE)
     return directory
 
 

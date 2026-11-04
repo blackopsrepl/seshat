@@ -195,6 +195,10 @@ def adopt_into_store(
             job.result["store_error"] = str(exc)
         return
     job.state_dir = directory
+    # Derived work (narration's .part and its workdir) belongs beside the take:
+    # job.directory follows, so the final deliverable never replaces across the
+    # tmpfs/store device boundary.
+    job.directory = directory
     job.artifact = directory / job.artifact.name
     if job.timeline_path is not None:
         job.timeline_path = directory / job.timeline_path.name

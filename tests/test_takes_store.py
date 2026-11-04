@@ -73,6 +73,30 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in store.take_directory(job.id).iterdir()),
                          ["take.json"])
 
+    def test_adopt_survives_a_cross_device_move(self) -> None:
+        """The runtime dir is tmpfs and the store never is; os.replace can EXDEV.
+
+        This host has made exactly this mistake: adoption failed with
+        [Errno 18] and left the take unadopted while every unit tier (where the
+        two roots share the tmp device) stayed green.
+        """
+        job = self.store_job()
+        real_replace = os.replace
+
+        def refuse_cross_device(source, destination, *args, **kwargs):
+            # Refuse only the move FROM the runtime root; the adopt fallback's
+            # staging replace (inside the store dir itself) is same-device by
+            # construction and must go through.
+            if ".adopt" not in Path(source).name:
+                raise OSError(18, "Invalid cross-device link")
+            return real_replace(source, destination, *args, **kwargs)
+
+        with patch.object(os, "replace", side_effect=refuse_cross_device):
+            directory = store.adopt(job, None)
+        self.assertTrue((directory / job.artifact.name).exists())
+        self.assertFalse(job.artifact.exists())
+        self.assertNotIn(".adopt", [p.name for p in directory.iterdir()])
+
     def test_roundtrip_through_a_fresh_manager(self) -> None:
         job = self.store_job(events=[event(700.0)], fmt="mp4")
         job.result = {
