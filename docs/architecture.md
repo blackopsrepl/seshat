@@ -55,6 +55,7 @@ Corollary rules that fall out of the boundary:
 | audio | `recording` (via `pactl`) | the only audio-server fact capture needs: which PulseAudio source a take's `audio=` mode resolves to |
 | timeline | `timeline` | recording-relative projection, event ids, media extent, sidecar |
 | narration | `tts`, `narration`, `scheduling`, `subtitles`, `scenes` | synthesis, anchor resolution, scheduling, phrase captions, soft sidecars, burn-in argv |
+| render | `render`, `render_ffmpeg`, `windows` | the edit plan over ingested events, the render argv (trim, idle re-time, zoom, markers, profiles, poster/teaser/chapters), stitch, window targets |
 | store | `store`, `takes` | the durable take store: adoption, manifests, rehydration, list/discard/export |
 | lifecycle | `manager`, `workers` | the single take owner; ingestion, phase transitions, worker threads, shutdown |
 | surface | `tools`, `specs`, `server` | tool wrappers, JSON schemas, MCP loop, CLI facade |

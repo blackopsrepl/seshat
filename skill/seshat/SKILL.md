@@ -61,6 +61,16 @@ recording_timeline()        # read before writing a single word of prose
   server restart and a logout; `recording_list` names them, `recording_export`
   copies them out, `recording_discard` deletes one.
 
+## The capture target
+
+`recording_start` can take a `window` argument: a class or title substring
+resolved against the compositor's tree into a static rect on the output it
+sits on (exclusive with `region`). The rect is fixed for the take — a window
+that moves keeps its starting geometry, which is what makes the take
+anchorable. Resolve the exact name with the compositor's own client
+(`swaymsg -t get_tree`, `hyprctl -j clients`); a no-match is a clear error
+naming the needle.
+
 ## Narration
 
 Write the prose yourself — `recording_voiceover` synthesizes it and aligns it; it
@@ -166,6 +176,27 @@ shows; use the event only for its timing.
   without the `audio` argument and read the log tail for the backend error.
 - **Slow finalization.** WebM is AV1-encoded; poll `recording_status` rather than
   assuming a timeout means failure.
+
+## Post-production (recording_render)
+
+Run after the take completes, before narration; the render answers
+synchronously with its own event map:
+
+```
+recording_render(id=..., trim={"pad_ms": 400}, idle={"min_gap_ms": 1000, "speed": 4},
+                 zoom={"scale": 2, "hold_ms": 900}, markers=true,
+                 chapters=true, poster=true, teaser=true, profile="native")
+```
+
+- Every operation is anchored in the take's ingested events: `zoom`/`markers`
+  need payloads with coordinates, `chapters` needs payloads with a `chapter`
+  label; a need that cannot be met is a clear error, not a silent skip.
+- The result's `event_map` carries every event's remapped `t_ms`; narrate a
+  render with `at_ms` anchors from that table. The master is untouched, so a
+  re-render or a re-narration of the master never compounds anything.
+- `stitch: ["<id>", ...]` concatenates whole masters of the same shape and
+  codec at the container level; a mismatch is refused. Stitching takes of
+  different profiles is a refusal by design.
 
 ## Checking the deadline path for real
 

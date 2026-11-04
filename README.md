@@ -259,6 +259,32 @@ server that does not publish a stream. Anchor segments with `at_ms`, or use
 `recording_scenes` for approximate cuts. Scene cuts are secondary evidence;
 they are never the sync source.
 
+## Post-production
+
+`recording_render` post-produces a completed take over its own ingested
+timeline — nothing in the edit looks at the picture, so every cut traces back
+to an event:
+
+- `trim` keeps first-event to last-event plus a pad (default 300 ms).
+- `idle` speeds up every event-free gap past `min_gap_ms` (the picture and the
+  captured audio re-time together).
+- `zoom` holds a hard-cut zoom window centered where the events acted, for
+  `hold_ms`, then releases; `markers` pulses a box at the same points.
+- `profile` rescales to `1080p`/`720p`, or crops `native` to `vertical`
+  (9:16) around the median pointer position.
+- `poster`, `teaser` and `chapters` derive a poster PNG, a GIF teaser, and
+  chapters from the events whose payloads carry a `chapter` label — muxed
+  into the render and written as a YouTube-style list beside it.
+- `stitch` concatenates whole finalized masters of the same shape in order,
+  at the container level; a shape or codec mismatch is a refusal, not a
+  half-re-encoded catalog.
+
+The master is never modified; a render is a new `<id>.render[.<profile>].<fmt>`
+file in the take's store directory, validated before it is published. The
+result reports every event's remapped `t_ms`, so a script narrates a render
+with `at_ms` anchors against the render's own timeline. The render answers
+synchronously.
+
 ## What the events do and do not prove
 
 An event records that a tool call was **dispatched**, not that it visibly worked.
