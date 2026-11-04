@@ -362,13 +362,15 @@ def perform(manager: Any, arguments: dict[str, Any]) -> dict[str, Any]:
 
     The manager owns the take; the sync-join pattern here mirrors the plan
     worker's: the worker takes the same lock at its end, so the join happens
-    with the lock released.
+    with the lock released. Stitch leaves the lock before it runs, because it
+    re-locks to collect the order it concatenates.
     """
     import threading
     import time
 
     from . import workers
 
+    do_stitch = False
     with manager._lock:
         job = manager._select(arguments.get("id"))
         if job is None:
@@ -382,19 +384,24 @@ def perform(manager: Any, arguments: dict[str, Any]) -> dict[str, Any]:
         plan = parse_render_arguments(
             {key: value for key, value in arguments.items() if key != "id"}
         )
+        stitch_arguments = None
         if plan.get("stitch") is not None:
-            return stitch(manager, job, arguments)
-        if job.fmt == "gif":
+            stitch_arguments = arguments
+            do_stitch = True
+        elif job.fmt == "gif":
             raise core.ToolError(
-                'GIF cannot be re-rendered this way; render mp4 takes with recording_render'
+                "GIF cannot be re-rendered this way; render mp4 takes with recording_render"
             )
-        edit = compute_edit(job, plan)
-        job.render_result = None
-        job.render_error = None
-        worker = threading.Thread(
-            target=workers.build_render, args=(manager, job, plan, edit), daemon=True
-        )
-        worker.start()
+        if not do_stitch:
+            edit = compute_edit(job, plan)
+            job.render_result = None
+            job.render_error = None
+            worker = threading.Thread(
+                target=workers.build_render, args=(manager, job, plan, edit), daemon=True
+            )
+            worker.start()
+    if do_stitch:
+        return stitch(manager, job, stitch_arguments)
     # The join runs with the lock released: the worker takes the same lock at
     # its end, so joining inside the block deadlocks both sides.
     deadline = time.monotonic() + 540.0

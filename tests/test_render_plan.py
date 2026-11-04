@@ -231,6 +231,36 @@ class ArgvShapeTests(unittest.TestCase):
         self.assertIn("shape or codec differs", str(ctx.exception))
 
 
+class StitchHoldsNoLockTests(unittest.TestCase):
+    """stitch runs outside the manager lock: it re-locks to collect the order."""
+
+    def test_the_stitch_worker_probes_a_free_lock(self) -> None:
+        with TemporaryDirectory() as tmp:
+            env = patch.dict(
+                os.environ,
+                {"XDG_RUNTIME_DIR": tmp, "XDG_STATE_HOME": str(Path(tmp) / "state")},
+            )
+            env.start()
+            self.addCleanup(env.stop)
+            manager = manager_module.RecordingManager()
+            first = completed_job(tmp, events=[event(500.0)])
+            second = completed_job(tmp, events=[event(500.0)])
+            for job in (first, second):
+                manager._job = job
+                manager._jobs[job.id] = job
+            held = {}
+
+            def probe(manager_, job_, order):
+                held["free"] = manager_._lock.acquire(blocking=False)
+                if held["free"]:
+                    manager_._lock.release()
+                return {"path": "", "media_duration_ms": 0.0, "stitched": []}
+
+            with patch.object(workers, "render_stitch", side_effect=probe):
+                render.perform(manager, {"stitch": [second.id]})
+            self.assertTrue(held.get("free"))
+
+
 class RenderJoinHoldsNoLockTests(unittest.TestCase):
     """The sync render must not join its worker while holding the manager lock."""
 
