@@ -36,7 +36,7 @@ RUNTIME_ROOT := $(RUNTIME_DIR)/seshat
 # ============== Phony Targets ==============
 .PHONY: banner help check test test-one py-compile lint-files build ci-local pre-release \
         version bump-patch bump-minor bump-major bump-dry \
-        doctor self-test integration runtime clean \
+        doctor self-test integration integration-narration runtime clean \
         _unit _py_compile _file_length
 
 # ============== Default Target ==============
@@ -229,6 +229,19 @@ integration: banner
 	fi
 	@printf "\n"
 	@PYTHONPATH=src $(PYTHON) scripts/integration_deadline.py
+
+integration-narration: banner
+	@printf "$(CYAN)$(BOLD)$(BOX_TOP)$(RESET)\n"
+	@printf "$(CYAN)$(BOLD)║             Narration Integration Check                  ║$(RESET)\n"
+	@printf "$(CYAN)$(BOLD)$(BOX_BOT)$(RESET)\n\n"
+	@printf "$(RED)$(BOLD)WARNING: this records the live screen with desktop audio.$(RESET)\n"
+	@if [ "$${SESHAT_INTEGRATION:-}" != "1" ]; then \
+		printf "$(CROSS) refusing to run: opt in explicitly$(RESET)\n"; \
+		printf "$(GRAY)  SESHAT_INTEGRATION=1 make integration-narration$(RESET)\n\n"; \
+		exit 1; \
+	fi
+	@printf "\n"
+	@PYTHONPATH=src $(PYTHON) scripts/integration_narration.py
 
 runtime: banner
 	@printf "$(CYAN)$(BOLD)$(BOX_TOP)$(RESET)\n"
