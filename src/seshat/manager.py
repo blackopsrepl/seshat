@@ -11,6 +11,8 @@ from . import (
     lifecycle,
     narration,
     recording,
+    render,
+    render_ffmpeg,
     reporting,
     scenes,
     store,
@@ -455,6 +457,11 @@ class RecordingManager:
 
     def _summary(self, job: recording.RecordingJob) -> dict[str, Any]:
         return reporting.phase_summary(job, intermediate_bytes=workers.intermediate_size(job))
+
+
+    def render(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Timeline-driven post-production; dispatches to the render module."""
+        return render.perform(self, dict(arguments or {}))
 
 
 RECORDINGS = RecordingManager()

@@ -113,6 +113,10 @@ def tool_recording_export(arguments: dict[str, Any]) -> list[dict[str, str]]:
     return core.json_text(manager.RECORDINGS.export(arguments))
 
 
+def tool_recording_render(arguments: dict[str, Any]) -> list[dict[str, str]]:
+    return core.json_text(manager.RECORDINGS.render(arguments))
+
+
 TOOLS = {
     "seshat_info": tool_seshat_info,
     "recording_start": tool_recording_start,
@@ -124,4 +128,5 @@ TOOLS = {
     "recording_list": tool_recording_list,
     "recording_discard": tool_recording_discard,
     "recording_export": tool_recording_export,
+    "recording_render": tool_recording_render,
 }

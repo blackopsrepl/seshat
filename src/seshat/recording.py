@@ -76,6 +76,10 @@ class RecordingJob:
     narration: dict[str, Any] | None = None
     plan: dict[str, Any] | None = None
     plan_error: str | None = None
+    render_result: dict[str, Any] | None = None
+    render_error: str | None = None
+    stitch_result: dict[str, Any] | None = None
+    stitch_error: str | None = None
 
 
 def parse_recording_format(value: Any) -> str:

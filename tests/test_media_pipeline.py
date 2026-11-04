@@ -23,12 +23,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from seshat import (  # noqa: E402
     encoding,
+    manager,
     media,
     narration,
     outputs,
     recording,
     server,
     tts,
+    workers,
 )
 
 FFMPEG = shutil.which("ffmpeg")
@@ -250,6 +252,103 @@ class NarrationMediaTests(MediaPipelineTests):
         self.narrate(job, request)
         narrated_mean = bottom_strip_mean(job.narrated_path, 0.1)
         self.assertGreater(abs(narrated_mean - master_mean), 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+@unittest.skipUnless(FFMPEG and FFPROBE, "ffmpeg/ffprobe not available")
+class RenderMediaTests(MediaPipelineTests):
+    """The timeline-driven render over a synthesized master, run for real."""
+
+    def master_with_events(self, *, seconds: float = 10.0, tone_hz: int | None = None):
+        job = self.new_job(audio="monitor" if tone_hz else "off")
+        self.synth_intermediate(job, seconds=seconds, tone_hz=tone_hz)
+        recording.finalize_recording(job)
+        job.artifact.chmod(recording.RECORDING_FILE_MODE)
+        # The events sit inside THIS job's capture window, so t_ms is what the
+        # tooling reports regardless of the support helper's epoch constant.
+        base = job.started_monotonic
+
+        def job_event(t_ms: float, payload: dict) -> dict:
+            return {
+                "at_monotonic": base + t_ms / 1000.0,
+                "tool": "click",
+                "ok": True,
+                "payload": payload,
+                "source": "tester",
+            }
+
+        events = [
+            job_event(500.0, {"x": 160, "y": 120}),
+            job_event(8_000.0, {"x": 160, "y": 200, "chapter": "Demo"}),
+        ]
+        return job, events
+
+    def render_job(self, job, plan_args, events) -> dict:
+        from seshat import render as render_mod
+        job.events = list(events)
+        with patch.object(narration, "recording_duration_ms",
+                          return_value=media.probe_duration_ms(job.artifact)):
+            plan = render_mod.parse_render_arguments(plan_args)
+            edit = render_mod.compute_edit(job, plan)
+        workers.build_render(manager.RECORDINGS, job, plan, edit)
+        self.assertIsNone(job.render_error, job.render_error)
+        self.assertIsNotNone(job.render_result)
+        if job.render_result is None:
+            raise AssertionError("render did not publish a result")
+        return job.render_result
+
+    def test_trim_and_idle_change_the_output_duration(self) -> None:
+        job, events = self.master_with_events()
+        result = self.render_job(
+            job, {"trim": {"pad_ms": 0.0}, "idle": {"min_gap_ms": 1_000.0, "speed": 4.0}},
+            events,
+        )
+        # pad_ms=0 trims to the events themselves: [0.5s, 8.0s]; the whole
+        # covered span is the event-free gap (7.5s) and plays at 4.0x.
+        self.assertAlmostEqual(result["media_duration_ms"] / 1000.0, 1.875, delta=0.25)
+        self.assertEqual(len(result["event_map"]), 2)
+        self.assertEqual(result["event_map"][0]["out_ms"], 0.0)
+        self.assertEqual(result["event_map"][1]["out_ms"], 1_875.0)
+
+    def test_zoom_holds_a_point_and_markers_pulse_the_picture(self) -> None:
+        job, events = self.master_with_events()
+        result = self.render_job(
+            job, {"zoom": {"scale": 2.0, "hold_ms": 800.0}, "markers": True}, events
+        )
+        self.assertEqual(result["zoom_windows"], 2)
+        self.assertEqual(result["markers"], 2)
+
+    def test_profile_vertical_crops_to_nine_sixteen(self) -> None:
+        job, events = self.master_with_events()
+        result = self.render_job(job, {"profile": "vertical"}, events)
+        probe = media.probe_media(Path(result["path"]))
+        video = next(s for s in probe["streams"] if s["codec_type"] == "video")
+        width, height = int(video["width"]), int(video["height"])
+        self.assertAlmostEqual(width / height, 9 / 16.0, places=1)
+
+    def test_chapters_and_poster_derive_on_reencode(self) -> None:
+        job, events = self.master_with_events()
+        result = self.render_job(
+            job, {"chapters": True, "poster": True, "profile": "1080p"}, events
+        )
+        self.assertTrue(Path(result["poster"]).exists())
+        list_text = Path(result["chapters"]).read_text(encoding="utf-8")
+        # Second event, remapped: 0.5s + (8.0 - 0.5)s (no idle) -> 8.0s? No idle:
+        # first event at 0.5s, second stays at 8.0s -> "0:08 Demo".
+        self.assertIn("Demo", list_text)
+
+    def test_stitch_concats_two_whole_masters_verbatim(self) -> None:
+        first, _ = self.master_with_events()
+        second, _ = self.master_with_events()
+        meta = workers.render_stitch(
+            manager.RECORDINGS, first,
+            [(first.id, first, False), (second.id, second, False)],
+        )
+        self.assertAlmostEqual(
+            media.probe_duration_ms(Path(meta["path"])) / 1000.0, 20.0, delta=0.4
+        )
 
 
 if __name__ == "__main__":

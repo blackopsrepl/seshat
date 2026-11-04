@@ -27,13 +27,15 @@ def single_output(name: str = "DP-1", width: int = 1920, height: int = 1080) -> 
     ]
 
 
-def event(t_ms: float, tool: str = "click", source: str = "seshat") -> dict:
+def event(
+    t_ms: float, tool: str = "click", source: str = "seshat", payload: dict | None = None
+) -> dict:
     """One ingested event ``t_ms`` into a take that started at ``EPOCH_MONOTONIC``."""
     return {
         "at_monotonic": EPOCH_MONOTONIC + t_ms / 1000.0,
         "tool": tool,
         "ok": True,
-        "payload": {},
+        "payload": dict(payload or {}),
         "source": source,
     }
 

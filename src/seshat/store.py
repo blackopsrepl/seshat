@@ -109,6 +109,21 @@ def append_narration_record(take_id: str, arguments: dict, meta: dict) -> None:
     _write_private(path, existing + line)
 
 
+def render_journal_path(take_id: str) -> Path:
+    return take_directory(take_id) / "renders.jsonl"
+
+
+def append_render_record(take_id: str, arguments: dict, meta: dict) -> None:
+    """One line per render: the operation arguments and what they produced."""
+    record = {"arguments": dict(arguments), "meta": dict(meta)}
+    path = render_journal_path(take_id)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=recording.RECORDING_DIR_MODE)
+    os.chmod(path.parent, recording.RECORDING_DIR_MODE)
+    line = (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+    existing = path.read_bytes() if path.exists() else b""
+    _write_private(path, existing + line)
+
+
 def read_manifest(take_id: str) -> dict | None:
     path = manifest_path(take_id)
     try:

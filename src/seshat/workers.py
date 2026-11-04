@@ -18,7 +18,18 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from . import core, lifecycle, narration, recording, store, timeline, tts
+from . import (
+    core,
+    lifecycle,
+    media,
+    narration,
+    recording,
+    render,
+    render_ffmpeg,
+    store,
+    timeline,
+    tts,
+)
 
 if TYPE_CHECKING:
     from .manager import RecordingManager
@@ -310,3 +321,158 @@ def narrate(
                     store.write_manifest(job)
                 except OSError as exc:
                     core.eprint(f"could not journal the narration for {job.id}: {exc}")
+
+def build_render(
+    manager: "RecordingManager",
+    job: recording.RecordingJob,
+    plan: dict[str, Any],
+    edit: "render.Edit",
+) -> None:
+    """The render worker: build, validate, publish, then derive the extras."""
+    profile = edit.profile
+    base = f"{job.id}.render" + ("" if profile == "native" else f".{profile}")
+    out_path = job.directory / f"{base}.{job.fmt}"
+    candidate = out_path.with_name(out_path.name + ".part")
+    poster_path = job.directory / f"{base}.poster.png"
+    teaser_path = job.directory / f"{base}.teaser.gif"
+    chapters_path = job.directory / f"{base}.chapters.meta"
+    try:
+        probe = media.probe_media(job.artifact)
+        video = next(
+            stream for stream in probe.get("streams") or []
+            if stream.get("codec_type") == "video"
+        )
+        width, height = int(video["width"]), int(video["height"])
+        has_audio = any(
+            stream.get("codec_type") == "audio" for stream in probe.get("streams") or []
+        )
+        chapters_input: Path | None = None
+        if plan.get("chapters"):
+            text = render_ffmpeg.chapters_metadata_text(edit, edit.trim_end_ms - edit.trim_start_ms)
+            chapters_input = chapters_path
+            chapters_input.write_text(text, encoding="utf-8")
+            os.chmod(chapters_input, recording.RECORDING_FILE_MODE)
+        argv = render_ffmpeg.main_pass_argv(
+            job, edit, candidate, width, height, has_audio, chapters_input, job.fmt
+        )
+        core.run_command(argv, timeout=600.0)
+        summary = recording.validate_recording_artifact(
+            job, expect_audio=has_audio, path=candidate
+        )
+        os.replace(candidate, out_path)
+        os.chmod(out_path, recording.RECORDING_FILE_MODE)
+        media_ms = round(float(summary.get("media_duration_seconds") or 0.0) * 1000.0, 3)
+        meta = {
+            "path": str(out_path),
+            "bytes": out_path.stat().st_size,
+            "format": job.fmt,
+            "profile": profile,
+            "media_duration_ms": media_ms,
+            "trim_ms": [round(edit.trim_start_ms, 3), round(edit.trim_end_ms, 3)],
+            "scale": round(edit.scale(), 4),
+            "zoom_windows": len(edit.zoom_windows),
+            "markers": len(edit.markers),
+            "event_map": [
+                {"tool": event.tool, "source": event.source, "t_ms": event.t_ms, "out_ms": event.out_ms}
+                for event in edit.events
+            ],
+        }
+        if chapters_input is not None:
+            # The YouTube-listable form of the same chapters, next to the render.
+            lines = []
+            for start_ms, title in render.chapter_list(edit):
+                minutes, seconds = divmod(int(round(start_ms / 1000.0)), 60)
+                lines.append(f"{minutes}:{seconds:02d} {title}")
+            out_path.with_suffix(".chapters.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            os.chmod(out_path.with_suffix(".chapters.txt"), recording.RECORDING_FILE_MODE)
+            meta["chapters"] = str(out_path.with_suffix(".chapters.txt"))
+        if plan.get("poster"):
+            poster_argv = render_ffmpeg.poster_argv(
+                out_path, render.poster_t_ms(edit), poster_path
+            )
+            core.run_command(poster_argv, timeout=120.0)
+            os.chmod(poster_path, recording.RECORDING_FILE_MODE)
+            meta["poster"] = str(poster_path)
+        if plan.get("teaser"):
+            start_ms, end_ms = render.teaser_span_ms(edit, media_ms, render_ffmpeg.RENDER_TEASER_SECONDS_DEFAULT)
+            core.run_command(
+                render_ffmpeg.teaser_argv(out_path, start_ms, end_ms, teaser_path), timeout=300.0
+            )
+            meta["teaser"] = str(teaser_path)
+    except core.ToolError as exc:
+        candidate.unlink(missing_ok=True)
+        with manager._lock:
+            job.render_error = str(exc)
+            job.detail = f"render failed: {exc}"
+        return
+    except Exception as exc:
+        core.eprint(f"unexpected render error for {job.id}: {exc!r}")
+        candidate.unlink(missing_ok=True)
+        detail = f"unexpected render failure: {exc!r}"
+        with manager._lock:
+            job.render_error = detail
+            job.detail = detail
+        return
+    with manager._lock:
+        job.render_result = meta
+        job.detail = None
+        if job.state_dir is not None:
+            try:
+                store.append_render_record(job.id, dict(plan), meta)
+            except OSError as exc:
+                core.eprint(f"could not journal the render for {job.id}: {exc}")
+
+
+def render_stitch(
+    manager: "RecordingManager",
+    job: recording.RecordingJob,
+    order: list[tuple[str, recording.RecordingJob, bool]],
+) -> dict[str, Any]:
+    """Concatenates whole finalized masters in order; container-level, no cuts."""
+    out_path = job.directory / f"{job.id}.stitch.{job.fmt}"
+    candidate = out_path.with_name(out_path.name + ".part")
+    list_path = out_path.with_suffix(".concat.txt")
+    try:
+        masters = [entry.artifact for _, entry, _ in order]
+        render_ffmpeg.probes_match_shape([media.probe_media(master) for master in masters])
+        list_path.write_text(render_ffmpeg.stitch_list_text(masters), encoding="utf-8")
+        os.chmod(list_path, recording.RECORDING_FILE_MODE)
+        has_audio = any(wants for _, _, wants in order)
+        core.run_command(
+            render_ffmpeg.stitch_argv(list_path, candidate, has_audio, job.fmt), timeout=600.0
+        )
+        summary = recording.validate_recording_artifact(
+            job, expect_audio=has_audio, path=candidate
+        )
+        os.replace(candidate, out_path)
+        os.chmod(out_path, recording.RECORDING_FILE_MODE)
+        media_ms = round(float(summary.get("media_duration_seconds") or 0.0) * 1000.0, 3)
+        meta = {
+            "path": str(out_path),
+            "bytes": out_path.stat().st_size,
+            "format": job.fmt,
+            "profile": "native",
+            "media_duration_ms": media_ms,
+            "stitched": [entry_id for entry_id, _, _ in order],
+        }
+    except core.ToolError as exc:
+        candidate.unlink(missing_ok=True)
+        job.stitch_error = str(exc)
+        job.detail = f"stitch failed: {exc}"
+        raise
+    except Exception as exc:
+        core.eprint(f"unexpected stitch error for {job.id}: {exc}")
+        candidate.unlink(missing_ok=True)
+        job.stitch_error = "unexpected stitch failure; see server log"
+        job.detail = job.stitch_error
+        raise core.ToolError(job.stitch_error)
+    finally:
+        list_path.unlink(missing_ok=True)
+    job.detail = None
+    if job.state_dir is not None:
+        try:
+            store.append_render_record(job.id, {"stitched": meta["stitched"]}, meta)
+        except OSError as exc:
+            core.eprint(f"could not journal the stitch for {job.id}: {exc}")
+    job.stitch_result = meta
+    return meta

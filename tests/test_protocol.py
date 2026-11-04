@@ -71,6 +71,7 @@ class ProtocolTests(unittest.TestCase):
                 "recording_list",
                 "recording_discard",
                 "recording_export",
+                "recording_render",
             },
         )
 
