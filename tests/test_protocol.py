@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -89,6 +91,60 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(result["isError"])
         self.assertEqual(result["content"][0]["type"], "text")
         self.assertIn("unknown tool", result["content"][0]["text"])
+
+    def test_ping_answers_with_an_empty_result(self) -> None:
+        response = server.handle_message({"jsonrpc": "2.0", "id": 9, "method": "ping"})
+        self.assertEqual(response, {"jsonrpc": "2.0", "id": 9, "result": {}})
+
+    def test_non_object_bodies_are_refused_and_answered(self) -> None:
+        """A batch array or bare value cannot be routed, so it is an invalid request."""
+        for body in ([{"jsonrpc": "2.0", "id": 1, "method": "ping"}], "hello", 7, [], None):
+            response = server.handle_message(body)
+            self.assertEqual(response["error"]["code"], -32600, response)
+            self.assertIsNone(response["id"])
+
+    def test_non_object_arguments_answer_as_invalid_params(self) -> None:
+        response = server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "recording_status", "arguments": [1, 2]},
+            }
+        )
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("arguments must be an object", response["error"]["message"])
+
+    def test_null_arguments_default_to_an_empty_object(self) -> None:
+        response = server.handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "recording_status", "arguments": None},
+            }
+        )
+        self.assertFalse(response["result"]["isError"])
+        self.assertEqual(json.loads(response["result"]["content"][0]["text"]), {"phase": "idle"})
+
+    def test_the_message_loop_outlives_an_undroutable_or_raising_message(self) -> None:
+        bad = '[{"jsonrpc": "2.0", "id": 1, "method": "ping"}]'
+        good = '{"jsonrpc": "2.0", "id": 2, "method": "ping"}'
+        raising = '{"jsonrpc": "2.0", "id": 3, "method": "tools/list"}'
+        another_good = '{"jsonrpc": "2.0", "id": 4, "method": "ping"}'
+        out = io.StringIO()
+        with patch.object(sys, "stdin", io.StringIO("\n".join([bad, good, raising, another_good]))):
+            with patch.object(sys, "stdout", out):
+                with patch.object(
+                    server, "tool_specs", side_effect=RuntimeError("boom")
+                ):
+                    server.run_mcp_server()
+        lines = [json.loads(line) for line in out.getvalue().splitlines()]
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[0]["error"]["code"], -32600)
+        self.assertEqual(lines[1], {"jsonrpc": "2.0", "id": 2, "result": {}})
+        self.assertEqual(lines[2]["error"]["code"], -32603)
+        self.assertEqual(lines[3], {"jsonrpc": "2.0", "id": 4, "result": {}})
 
     def test_notification_returns_no_response(self) -> None:
         response = server.handle_message(

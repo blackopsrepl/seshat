@@ -54,7 +54,17 @@ OPERATING_INSTRUCTIONS = (
 )
 
 
-def handle_message(message: dict[str, Any]) -> dict[str, Any] | None:
+def _error_response(request_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+
+
+def handle_message(message: Any) -> dict[str, Any] | None:
+    # A message that is not an object (e.g. a JSON-RPC 2.0 batch array) cannot
+    # be routed at all: answered as "invalid request" so a stray body kills a
+    # request, never the server loop and the takes it owns.
+    if not isinstance(message, dict):
+        return _error_response(None, -32600, "invalid request: expected one JSON object")
+
     method = message.get("method")
     request_id = message.get("id")
 
@@ -73,6 +83,9 @@ def handle_message(message: dict[str, Any]) -> dict[str, Any] | None:
     if method == "notifications/initialized":
         return None
 
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {}}
+
     if method == "tools/list":
         return {
             "jsonrpc": "2.0",
@@ -82,8 +95,18 @@ def handle_message(message: dict[str, Any]) -> dict[str, Any] | None:
 
     if method == "tools/call":
         params = message.get("params") or {}
+        if not isinstance(params, dict):
+            return _error_response(request_id, -32600, "invalid request: params must be an object")
         name = params.get("name")
-        arguments = params.get("arguments") or {}
+        arguments = params.get("arguments")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return _error_response(
+                request_id,
+                -32602,
+                "invalid params: arguments must be an object",
+            )
         if name not in TOOLS:
             return {
                 "jsonrpc": "2.0",
@@ -153,7 +176,17 @@ def run_mcp_server() -> int:
                     "error": {"code": -32700, "message": f"Parse error: {exc}"},
                 }
             else:
-                response = handle_message(message)
+                # No message reaches the shutdown below: a routed handler that
+                # raises is answered as an internal error and the loop lives.
+                try:
+                    response = handle_message(message)
+                except Exception as exc:
+                    eprint(f"unexpected protocol error in {message.get('method')}: {exc}")
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": message.get("id") if isinstance(message, dict) else None,
+                        "error": {"code": -32603, "message": "internal error"},
+                    }
             if response is not None:
                 print(json.dumps(response, separators=(",", ":")), flush=True)
     finally:
