@@ -43,6 +43,8 @@ recording_timeline()        # read before writing a single word of prose
 - One take at a time per process; a second `recording_start` is an error.
 - The watchdog stops the take at `max_duration_seconds` (default 60, gif 15) and
   reports `auto_stopped: true`, so a forgotten take cannot run forever.
+- `recording_status(wait_seconds=30)` blocks until a terminal phase instead of
+  forcing the agent to poll; the watchdog reaps a recorder that died on its own.
 - **Desktop audio is opt-in**: pass `audio="monitor"` to record the desktop's
   own sound (application/system audio from the default sink), or `audio="mic"`
   for the host's default microphone. The default is silence. `audio="monitor"`
@@ -53,8 +55,11 @@ recording_timeline()        # read before writing a single word of prose
   exactly why seshat resolves `<default-sink>.monitor` instead. A take can start
   with desktop audio and still get narration later — the voice lands as an
   additional stream on top of the captured track.
-- Artifacts land in `$XDG_RUNTIME_DIR/seshat/recordings` and do not survive
-  logout. Copy out anything you need to keep.
+- Artifacts land in `$XDG_RUNTIME_DIR/seshat/recordings` while the take runs and
+  move into the durable store `$XDG_STATE_HOME/seshat/takes/<id>/` when the take
+  completes: master, timeline, manifest and narration journal. Takes survive a
+  server restart and a logout; `recording_list` names them, `recording_export`
+  copies them out, `recording_discard` deletes one.
 
 ## Narration
 
@@ -129,11 +134,12 @@ shows; use the event only for its timing.
   `subtitles=false`. To burn captions, start the server with a full ffmpeg on
   `PATH` before recording (on mixed brew/Arch hosts: `/usr/bin/ffmpeg` first);
   restarting to change `PATH` forgets the server's in-memory takes.
-- **`unknown recording id`.** Takes live in the server process: a restarted
-  server cannot narrate, re-analyze, or even report an earlier take. Record,
-  narrate and collect the artifact within one server session.
-- **`piper is not installed` / no TTS engine.** Install `piper` and a voice
-  model, or accept that `edge-tts` sends the narration prose to Microsoft.
+- **`unknown recording id`.** A restarted server rehydrates completed takes,
+  but a lost id is best recovered from `recording_list`, and an active take
+  still lives only in one server process.
+- **`piper is not installed` / no TTS engine.** `engine="auto"` is offline-only:
+  install `piper` and a voice model, and the error names the `engine="edge"`
+  opt-in that sends the narration prose to Microsoft.
 - **`could not resolve a default audio sink from pactl info`.** `audio="monitor"`
   and `audio="auto"` need a default sink; a headless or audio-less session has
   none. Use `audio="mic"` or record silent.

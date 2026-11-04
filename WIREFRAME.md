@@ -1,19 +1,22 @@
 # WIREFRAME — shipped MCP tool surface
 
-Server name `seshat`, MCP protocol `2024-11-05`, stdio transport, seven tools.
+Server name `seshat`, MCP protocol `2024-11-05`, stdio transport, ten tools.
 This file describes what is shipped; it is not a roadmap.
 
 ## Tools
 
 | tool | mutates | purpose |
 |---|---|---|
-| `seshat_info` | no | active take, runtime paths, streams to be ingested, capture outputs, narration binaries |
+| `seshat_info` | no | active take, runtime paths, durable store, streams to be ingested, capture outputs, narration binaries |
 | `recording_start` | yes | begin a take on an output or region |
-| `recording_status` | no | lifecycle phase, live progress, final artifact metadata |
+| `recording_status` | no | lifecycle phase, live progress, final artifact metadata; `wait_seconds` blocks for a terminal phase |
 | `recording_stop` | yes | stop capture and begin finalization |
 | `recording_timeline` | no | ingested events with recording-relative `t_ms`, plus the per-source report |
 | `recording_voiceover` | yes | synthesize, align and mux a narration track (optionally burning captions) |
 | `recording_scenes` | no | approximate scene cuts (+ optional OCR) as fallback anchors |
+| `recording_list` | no | every take in memory and rehydrated from the store |
+| `recording_discard` | yes | delete one inactive take's store directory |
+| `recording_export` | yes | copy one completed take's published files to a directory |
 
 ### recording_start
 
@@ -123,12 +126,24 @@ source.
 
 ## Runtime contract
 
-- Runtime root `$XDG_RUNTIME_DIR/seshat` (0700): `streams/` for ingestion,
-  `recordings/` for takes. Artifacts are 0600 and do not survive logout.
-- One take per process. `RECORDINGS` is the single owner; the server stops an
-  active capture on stdin EOF. Takes live in the server's memory: once the
-  process exits they are forgotten, so narration must run in the same server
-  session that recorded the take.
+- Runtime root `$XDG_RUNTIME_DIR/seshat` (0700) holds `streams/` for ingestion
+  and `recordings/` for the live intermediate and capture log. A completed take
+  is adopted into the durable store `$XDG_STATE_HOME/seshat/takes/<id>/`
+  (0700/0600): `master` (`<id>.<fmt>`), `narrated.<fmt>` when narration ran,
+  the timeline sidecar, `take.json` (the manifest, including the completion
+  result), and `narration.jsonl` (one line per voiceover request and schedule).
+  Startup rehydrates completed takes from the store; `recording_export` is the
+  only way files leave it, `recording_discard` the only way they are deleted.
+- One capture at a time per process. `RECORDINGS` is the single owner; the
+  server stops an active capture on stdin EOF. The watchdog reaps a recorder
+  that died between polls; `recording_status(wait_seconds≤60)` blocks for a
+  terminal phase instead of forcing a poll per agent turn.
+- Tools answer `structuredContent` alongside their text content, and carry MCP
+  `annotations` (`readOnlyHint` on the read-only tools, `destructiveHint` on
+  `recording_discard`). `engine="auto"` resolves to the offline `piper` engine
+  only; `engine="edge"` is the explicit opt-in to send narration prose to
+  Microsoft, and the narration result always reports engine, resolved `voice`
+  and `network`.
 - Three lifecycle/media facts stay separate: `capture_elapsed_seconds` spans
   recorder launch through the stop request, `shutdown_latency_seconds` spans the
   stop request through process exit, and `media_duration_seconds` is the playable

@@ -53,7 +53,8 @@ Corollary rules that fall out of the boundary:
 | audio | `recording` (via `pactl`) | the only audio-server fact capture needs: which PulseAudio source a take's `audio=` mode resolves to |
 | timeline | `timeline` | recording-relative projection, event ids, media extent, sidecar |
 | narration | `tts`, `narration`, `subtitles`, `scenes` | synthesis, anchor resolution, scheduling, caption layout, burn-in argv |
-| lifecycle | `manager` | the single take owner; ingestion, phase transitions, shutdown |
+| store | `store`, `takes` | the durable take store: adoption, manifests, rehydration, list/discard/export |
+| lifecycle | `manager`, `workers` | the single take owner; ingestion, phase transitions, worker threads, shutdown |
 | surface | `tools`, `specs`, `server` | tool wrappers, JSON schemas, MCP loop, CLI facade |
 
 `server.py` star-imports the package: the composition root re-exports the
@@ -69,13 +70,19 @@ idle ──recording_start──> recording ──recording_stop──> stopping
 completed ──recording_voiceover──> narrating ──> completed   (failure returns to completed + error)
 ```
 
-- `RecordingManager` holds one lock, one current take, and a history of takes by
-  id — all in process memory, so a server restart forgets every take, completed
-  or not. Every mutation is under that lock.
+- `RecordingManager` holds one lock and one current take, plus the completed
+  takes it recorded and the ones rehydrated from the store — every mutation
+  under the lock. The two long transitions (finalization, narration) run on
+  worker threads in `workers.py`.
 - Finalization is a worker thread: it re-encodes to a private candidate, validates
   the stream/container contract, fully decodes the video, atomically publishes
-  the artifact, ingests the timeline streams, writes the sidecar, then discards
-  the intermediate and capture log.
+  the artifact, ingests the timeline streams, writes the sidecar, **adopts the
+  take into the durable store with its manifest**, then discards the
+  intermediate and capture log.
+- `store.py`/`takes.py` own the durable handoff: one directory per take under
+  `$XDG_STATE_HOME/seshat/takes/<id>/`, private modes, atomic manifest writes,
+  rehydration at startup, and export/discard as the only ways through the
+  boundary.
 - Ingestion is idempotent by construction: the event list is rebuilt from the
   streams on every read, so `recording_timeline` during a take, finalization, and
   anchor resolution before narration all see a consistent, duplicate-free list.

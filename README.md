@@ -45,8 +45,10 @@ from her headcloth. She keeps the book; she never invents a word of it.
   additionally needs an ffmpeg built with libass — the `subtitles` filter —
   which minimal builds ship without. A missing binary is reported as a clear
   tool error, never an import failure.
-- Optional: `edge-tts` (keyless, **network**) or `piper` (offline, needs a voice
-  model) for narration; `tesseract` for OCR of scene keys.
+- Optional: `piper` (offline — the `engine="auto"` default needs a voice model)
+  or `edge-tts` (network — runs only when `engine="edge"` is passed explicitly,
+  because it sends the narration prose to Microsoft); `tesseract` for OCR of
+  scene keys.
 
 On Arch or Omarchy:
 
@@ -107,10 +109,21 @@ recording_timeline()      # the ingested events, with recording-relative t_ms
 ```
 
 One take may be active at a time. Artifacts are written to
-`$XDG_RUNTIME_DIR/seshat/recordings` (0700, files 0600) and do not survive a
-logout; copy anything you want to keep.
+`$XDG_RUNTIME_DIR/seshat/recordings` (0700, files 0600); the live capture
+intermediate lives there because tmpfs is fastest. A **completed take is
+adopted into the durable store** `$XDG_STATE_HOME/seshat/takes/<id>/`
+(default `~/.local/state/seshat/takes/<id>/`, 0700/0600) — master, timeline
+sidecar, manifest and every narration request — and is rehydrated by the next
+server session: takes survive restarts, and only `recording_discard` deletes
+them. `recording_export` is the only way take files leave the store:
 
-Take is recorded **silent by default**. To capture desktop audio into the
+```
+recording_list()                       # every take this process knows
+recording_export(destination="/path")  # copy master, deliverable, sidecars, manifest
+recording_discard(id="...")            # delete one stored take (irreversible)
+```
+
+Takes are recorded **silent by default**. To capture desktop audio into the
 artifact, ask for it at start:
 
 ```
@@ -180,7 +193,8 @@ starts, not when it is finalized.
 ## Narrating a take
 
 Read the timeline first, then write prose against the event ids that are really
-there:
+there (`recording_status(wait_seconds=45)` below blocks until terminal instead
+of forcing a poll per turn):
 
 ```
 recording_timeline()
@@ -246,13 +260,16 @@ you observed yourself — never in the mere existence of an event.
   when `recording_start` says so, and records the desktop output's monitor —
   never the microphone — unless you explicitly ask for `mic`. A take never
   silently starts listening to anything.
-- `edge-tts` sends the narration prose to Microsoft. It is keyless but network
-  dependent. Install `piper` and a voice model (`voice`, or
-  `SESHAT_PIPER_MODEL`) to keep narration on the host.
+- **`edge-tts` runs only when asked for.** `engine="auto"` resolves to the
+  offline `piper` engine (install one and a voice model, or provide `voice`);
+  `engine="edge"` is an explicit opt-in to send the narration prose to
+  Microsoft. The narration result records `engine`, `voice` and `network`.
 - Narration text is the caller's; seshat never reads it from the screen, so
   nothing visible on screen becomes narration unless the agent says so.
-- Recordings and streams live under `$XDG_RUNTIME_DIR/seshat` with 0700 / 0600
-  permissions.
+- Recordings live under `$XDG_RUNTIME_DIR/seshat` while captured and move to
+  `$XDG_STATE_HOME/seshat/takes/<id>/` when finalized — 0700 / 0600 everywhere.
+  Files leave the store only through `recording_export` and are deleted only
+  through `recording_discard`.
 
 ## FAQ
 
