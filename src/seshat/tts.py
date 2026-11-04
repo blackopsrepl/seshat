@@ -10,9 +10,14 @@ from . import core, media
 
 
 NARRATION_ENGINES = ("auto", "edge", "piper")
-NARRATION_ENGINE_PREFERENCE = ("edge", "piper")
+# engine="auto" is offline-only: the same rule as audio capture. Nothing leaves
+# the host unless the caller explicitly asks for it, and edge-tts sends the
+# narration prose to the network.
+NARRATION_ENGINE_PREFERENCE = ("piper",)
+NARRATION_EDGE_PREFERENCE_LABEL = "edge"
 NARRATION_FITS = ("natural", "compress")
 NARRATION_EDGE_COMMAND = "edge-tts"
+NARRATION_EDGE_DEFAULT_VOICE = "en-US-EmmaMultilingualNeural"
 NARRATION_PIPER_COMMAND = "piper"
 NARRATION_PIPER_MODEL_ENV = "SESHAT_PIPER_MODEL"
 NARRATION_MIN_GAP_MS = 60.0
@@ -111,6 +116,8 @@ def detect_lead_silence_ms(path: Path) -> float:
 
 class TtsEngine:
     name = "base"
+    default_voice: str | None = None
+    network = False
 
     def synthesize(self, text: str, voice: str | None, out_path: Path) -> TtsClip:
         raise NotImplementedError
@@ -118,6 +125,8 @@ class TtsEngine:
 
 class PiperTtsEngine(TtsEngine):
     name = "piper"
+    default_voice = None
+    network = False
 
     def synthesize(self, text: str, voice: str | None, out_path: Path) -> TtsClip:
         core.require_binaries([NARRATION_PIPER_COMMAND, "ffmpeg", "ffprobe"])
@@ -140,6 +149,11 @@ class PiperTtsEngine(TtsEngine):
 
 class EdgeTtsEngine(TtsEngine):
     name = "edge"
+    # Pinned rather than whatever the binary's current default is, so narration
+    # does not drift when edge-tts changes its default; the resolved voice is
+    # always in the result.
+    default_voice = NARRATION_EDGE_DEFAULT_VOICE
+    network = True
 
     def synthesize(self, text: str, voice: str | None, out_path: Path) -> TtsClip:
         core.require_binaries([NARRATION_EDGE_COMMAND, "ffmpeg", "ffprobe"])
@@ -153,8 +167,7 @@ class EdgeTtsEngine(TtsEngine):
             "--write-subtitles",
             str(vtt_path),
         ]
-        if voice:
-            argv.extend(["--voice", voice])
+        argv.extend(["--voice", voice or NARRATION_EDGE_DEFAULT_VOICE])
         core.run_command(argv, timeout=NARRATION_SYNTH_TIMEOUT_SECONDS)
         try:
             vtt_text = vtt_path.read_text(encoding="utf-8", errors="replace")
@@ -172,6 +185,12 @@ class EdgeTtsEngine(TtsEngine):
 
 
 def resolve_tts_engine(requested: str) -> TtsEngine:
+    """Resolve the engine argument.
+
+    ``auto`` is offline-only: piper with a model, or the take is refused with
+    the opt-in named. ``edge`` is an explicit choice to send the narration
+    prose to Microsoft over the network; ``piper`` stays on the host.
+    """
     if requested == "edge":
         if not core.command_available(NARRATION_EDGE_COMMAND):
             raise core.ToolError(f"edge-tts is not installed (need {NARRATION_EDGE_COMMAND})")
@@ -180,10 +199,12 @@ def resolve_tts_engine(requested: str) -> TtsEngine:
         if not core.command_available(NARRATION_PIPER_COMMAND):
             raise core.ToolError(f"piper is not installed (need {NARRATION_PIPER_COMMAND})")
         return PiperTtsEngine()
-    for name in NARRATION_ENGINE_PREFERENCE:
-        command = NARRATION_EDGE_COMMAND if name == "edge" else NARRATION_PIPER_COMMAND
-        if core.command_available(command):
-            return EdgeTtsEngine() if name == "edge" else PiperTtsEngine()
-    raise core.ToolError(
-        "no TTS engine available; install edge-tts (network) or piper (offline)"
-    )
+    if requested == "auto":
+        if not core.command_available(NARRATION_PIPER_COMMAND):
+            raise core.ToolError(
+                'no offline TTS engine for engine="auto"; install piper and a voice '
+                'model to keep narration on the host, or pass engine="edge" to send '
+                "the narration prose to Microsoft over the network"
+            )
+        return PiperTtsEngine()
+    raise core.ToolError("engine must be one of: " + ", ".join(NARRATION_ENGINES))

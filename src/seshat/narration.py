@@ -407,7 +407,8 @@ def perform_narration(
             raise
         return {
             "engine": engine.name,
-            "voice": request.voice,
+            "voice": request.voice or getattr(engine, "default_voice", None),
+            "network": bool(getattr(engine, "network", False)),
             "offset_ms": request.offset_ms,
             "fit": request.fit,
             "subtitles": request.subtitles,

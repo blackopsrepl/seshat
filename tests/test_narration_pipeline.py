@@ -285,20 +285,29 @@ class EngineSynthesizeTests(unittest.TestCase):
 
 
 class EngineResolutionTests(unittest.TestCase):
-    def test_prefers_edge_when_both_available(self) -> None:
+    def test_auto_is_offline_only_and_prefers_piper(self) -> None:
         with patch.object(core, "command_available", return_value=True):
-            self.assertEqual(server.resolve_tts_engine("auto").name, "edge")
+            self.assertEqual(server.resolve_tts_engine("auto").name, "piper")
 
     def test_falls_back_to_piper_when_edge_missing(self) -> None:
         with patch.object(core, "command_available", lambda name: name == server.NARRATION_PIPER_COMMAND
         ):
             self.assertEqual(server.resolve_tts_engine("auto").name, "piper")
 
-    def test_no_engine_is_a_clear_error(self) -> None:
+    def test_no_offline_engine_names_the_edge_opt_in(self) -> None:
         with patch.object(core, "command_available", return_value=False):
             with self.assertRaises(server.ToolError) as ctx:
                 server.resolve_tts_engine("auto")
-        self.assertIn("no TTS engine", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn('engine="auto"', message)
+        self.assertIn('engine="edge"', message)
+        self.assertIn("piper", message)
+
+    def test_edge_is_explicit_and_pinned_to_a_default_voice(self) -> None:
+        with patch.object(core, "command_available", return_value=True):
+            engine = server.resolve_tts_engine("edge")
+        self.assertTrue(engine.network)
+        self.assertEqual(engine.default_voice, server.NARRATION_EDGE_DEFAULT_VOICE)
 
     def test_explicit_engine_must_be_installed(self) -> None:
         with patch.object(core, "command_available", return_value=False):
@@ -306,6 +315,8 @@ class EngineResolutionTests(unittest.TestCase):
                 server.resolve_tts_engine("edge")
             with self.assertRaises(server.ToolError):
                 server.resolve_tts_engine("piper")
+            with self.assertRaises(server.ToolError):
+                server.resolve_tts_engine("auto")
 
 
 class SceneParsingTests(unittest.TestCase):
