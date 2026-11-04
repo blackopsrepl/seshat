@@ -10,9 +10,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, encoding, narration, outputs, recording, server, subtitles, tts
+from seshat import core, encoding, media, narration, outputs, recording, server, subtitles, tts
 
 from support import completed_job, event
+
+
+class _FakeEngine:
+    name = "edge"
+
+    def synthesize(self, text: str, voice: str | None, out_path: Path) -> tts.TtsClip:
+        out_path.write_bytes(b"audio")
+        return tts.TtsClip(out_path, 1000.0, 100.0, [{"text": "x", "start_ms": 0, "end_ms": 1}])
 
 
 class TimestampTests(unittest.TestCase):
@@ -54,6 +62,51 @@ class AssDocumentTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), recording.RECORDING_FILE_MODE)
 
 
+class NarratedDeliverableTests(unittest.TestCase):
+    """Narration publishes a derived file and never touches the master."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.job = completed_job(self.tmp.name, events=[event(500.0)])
+
+    def run_narration(self, arguments: dict) -> dict:
+        request = narration.parse_narration_arguments(
+            arguments, self.job, server.recording_capture_ms(self.job)
+        )
+        with patch.object(core, "run_command", side_effect=self._fake_run):
+            with patch.object(recording, "validate_recording_artifact", return_value={}):
+                return narration.perform_narration(self.job, request, _FakeEngine())
+
+    @staticmethod
+    def _fake_run(argv, **kwargs):
+        if argv[-1].endswith(".part"):
+            Path(argv[-1]).write_bytes(b"muxed")
+        return core.CommandResult(stdout=b"", stderr=b"", returncode=0)
+
+    def test_publishes_to_the_narrated_path_and_keeps_the_master(self) -> None:
+        master_bytes = self.job.artifact.read_bytes()
+        self.run_narration(
+            {"segments": [{"anchor": {"event_id": 1}, "text": "hello"}]}
+        )
+        self.assertEqual(self.job.narrated_path.name, f"{self.job.id}.narrated.{self.job.fmt}")
+        self.assertEqual(self.job.narrated_path.read_bytes(), b"muxed")
+        self.assertEqual(self.job.artifact.read_bytes(), master_bytes)
+        self.assertEqual(recording.published_artifact(self.job), self.job.narrated_path)
+
+    def test_narration_probes_the_master_not_the_deliverable(self) -> None:
+        with patch.object(
+            media, "probe_duration_ms", return_value=5000.0
+        ) as probe:
+            narration.parse_narration_arguments(
+                {"segments": [{"anchor": {"event_id": 1}, "text": "hello"}]}, self.job
+            )
+        self.assertEqual(probe.call_args[0][0], self.job.artifact)
+        self.assertEqual(
+            recording.published_artifact(self.job), self.job.artifact
+        )
+
+
 class MuxArgvTests(unittest.TestCase):
     FILTER = "[0:v]subtitles=filename='x'[v]"
 
@@ -90,14 +143,6 @@ class MuxArgvTests(unittest.TestCase):
         argv = encoding.narration_mux_argv(job, Path("/tmp/n.wav"), Path("/tmp/out.webm"))
         self.assertEqual(argv[argv.index("-c:v") + 1], "copy")
         self.assertNotIn("subtitles=filename=", " ".join(argv))
-
-
-class _FakeEngine:
-    name = "edge"
-
-    def synthesize(self, text: str, voice: str | None, out_path: Path) -> tts.TtsClip:
-        out_path.write_bytes(b"audio")
-        return tts.TtsClip(out_path, 1000.0, 100.0, [{"text": "x", "start_ms": 0, "end_ms": 1}])
 
 
 class PerformNarrationSubtitlesTests(unittest.TestCase):

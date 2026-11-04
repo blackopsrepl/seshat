@@ -56,12 +56,14 @@ def recording_capture_ms(job: recording.RecordingJob) -> float:
 
 
 def recording_duration_ms(job: recording.RecordingJob) -> float:
-    """Playable extent of the published artifact, in milliseconds.
+    """Playable extent of the take's master artifact, in milliseconds.
 
-    Post-processing is owned by the artifact on disk: anchor validation and
-    scheduling must agree with the bytes the caller can actually see at
-    ``job.artifact``. Capture wall-clock time and the discarded intermediate
-    are never consulted, so a trimmed or replaced artifact is honored and an
+    The master is what narration builds from and what anchors map to; the
+    narrated deliverable is rebuilt from scratch on every run. Anchors validated
+    against an already-narrated file is exactly what let a second narration burn
+    captions onto the first, so the recorded picture — not the deliverable —
+    is consulted. Capture wall-clock time and the discarded intermediate
+    are never consulted, so a trimmed or replaced master is honored and an
     unreadable one fails clearly instead of silently using a stale duration.
 
     The video stream's own extent is preferred over the container's, because an
@@ -356,7 +358,7 @@ def perform_narration(
         try:
             recording.validate_recording_artifact(job, expect_audio=True, path=temp_path)
             os.chmod(temp_path, recording.RECORDING_FILE_MODE)
-            os.replace(temp_path, job.artifact)
+            os.replace(temp_path, job.narrated_path)
         except BaseException:
             temp_path.unlink(missing_ok=True)
             raise

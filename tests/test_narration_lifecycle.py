@@ -59,7 +59,7 @@ class VoiceoverLifecycleTests(unittest.TestCase):
         self.attach(job)
 
         def fake_perform(j, request, engine):
-            j.artifact.write_bytes(b"narrated")
+            j.narrated_path.write_bytes(b"narrated")
             return {"engine": engine.name, "segment_count": len(request.segments)}
 
         fresh = {

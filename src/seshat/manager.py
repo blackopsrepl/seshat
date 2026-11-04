@@ -226,7 +226,7 @@ class RecordingManager:
             job = self._select(arguments.get("id"))
             if job is None or job.phase != "completed":
                 raise core.ToolError("no completed recording to analyze")
-            artifact = job.artifact
+            artifact = recording.published_artifact(job)
             workdir = job.directory
             recording_id = job.id
         core.require_binaries(["ffmpeg", "ffprobe"])

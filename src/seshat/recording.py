@@ -43,6 +43,7 @@ class RecordingJob:
     artifact: Path
     log_path: Path
     log_fd: int
+    narrated_path: Path
     audio: str = "off"
     audio_source: str | None = None
     encoder: str = "libsvtav1"
@@ -319,7 +320,20 @@ def new_recording_job(arguments: dict[str, Any]) -> RecordingJob:
         audio_source=audio_source,
         stream_sources=stream_sources,
         timeline_path=intermediate.with_suffix(timeline.TIMELINE_SUFFIX),
+        narrated_path=intermediate.with_name(f"{recording_id}.narrated.{fmt}"),
     )
+
+
+def published_artifact(job: RecordingJob) -> Path:
+    """What a consumer plays now: the narrated deliverable when one was
+    published, otherwise the finalized master.
+
+    Narration always builds from the master and republishes the narrated file
+    from scratch, so a second narration can never compound onto the first.
+    """
+    if job.narrated_path.exists():
+        return job.narrated_path
+    return job.artifact
 
 
 RECORDING_LOG_TAIL_BYTES = 500

@@ -114,6 +114,7 @@ def finalize(manager: "RecordingManager", job: recording.RecordingJob) -> None:
         "output": job.output,
         "region": job.region,
         "path": str(job.artifact),
+        "master_path": str(job.artifact),
         "bytes": artifact_bytes,
         "capture_elapsed_seconds": round(capture_elapsed, 3),
         "latest_event_ms": latest_event_ms,
@@ -144,7 +145,9 @@ def narrate(
 ) -> None:
     try:
         narration_meta = narration.perform_narration(job, request, engine)
-        summary = recording.validate_recording_artifact(job, expect_audio=True)
+        summary = recording.validate_recording_artifact(
+            job, expect_audio=True, path=job.narrated_path
+        )
     except core.ToolError as exc:
         with manager._lock:
             job.phase = "completed"
@@ -173,8 +176,10 @@ def narrate(
             job.result["events_beyond_media"] = events_beyond_media
             job.result["latest_event_ms"] = latest_event_ms
             try:
-                job.result["bytes"] = job.artifact.stat().st_size
+                job.result["bytes"] = job.narrated_path.stat().st_size
             except OSError:
                 pass
+            job.result["path"] = str(job.narrated_path)
+            job.result["master_path"] = str(job.artifact)
             job.result["audio_included"] = True
             job.result["narration"] = narration_meta
