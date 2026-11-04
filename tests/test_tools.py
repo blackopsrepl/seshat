@@ -36,7 +36,7 @@ class SeshatInfoTests(unittest.TestCase):
         self.assertTrue(info["runtime"]["recordings"].endswith("recordings"))
         self.assertIn("wf-recorder", info["binaries"])
         self.assertIn("ffprobe", info["binaries"])
-        self.assertEqual(info["tts"]["engine_preference"], ["edge", "piper"])
+        self.assertEqual(info["tts"]["engine_preference"], ["piper"])
 
     def test_lists_the_streams_that_would_be_ingested(self) -> None:
         path = publish(self.tmp.name, "computer-use-sway", [1000.0])
