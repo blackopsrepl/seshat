@@ -278,12 +278,21 @@ to an event:
 - `stitch` concatenates whole finalized masters of the same shape in order,
   at the container level; a shape or codec mismatch is a refusal, not a
   half-re-encoded catalog.
+- `narrate` (with the narration arguments: `engine`, `voice`, `fit`, `position`,
+  `subtitles` and the voice character) speaks the cut itself: every segment's
+  anchor resolves on the render's own event map — `at_ms` against the render's
+  extent, an `event_id` as a position in the map, a content `match` against the
+  remapped rows — and the track is scheduled against the render and muxed to
+  `<id>.render.narrated.<fmt>`, with the cut's own audio as the ducked bed. The
+  cut is published before its narration runs, so a narration failure leaves a
+  complete picture with the reason in the render's `narration.error`.
 
 The master is never modified; a render is a new `<id>.render[.<profile>].<fmt>`
 file in the take's store directory, validated before it is published. The
 result reports every event's remapped `t_ms`, so a script narrates a render
-with `at_ms` anchors against the render's own timeline. The render answers
-synchronously.
+with `at_ms` anchors against the render's own timeline — or passes the prose
+straight to the render in `narrate` and takes the narrated cut from one call.
+The render answers synchronously.
 
 ## What the events do and do not prove
 

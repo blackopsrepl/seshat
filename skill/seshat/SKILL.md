@@ -192,7 +192,9 @@ recording_render(id=..., trim={"pad_ms": 400}, idle={"min_gap_ms": 1000, "speed"
   need payloads with coordinates, `chapters` needs payloads with a `chapter`
   label; a need that cannot be met is a clear error, not a silent skip.
 - The result's `event_map` carries every event's remapped `t_ms`; narrate a
-  render with `at_ms` anchors from that table. The master is untouched, so a
+  render with `at_ms` anchors from that table — or pass the prose to the render
+  itself in `narrate` and take `<id>.render.narrated.<fmt>` from the same call,
+  with the cut's own audio as the ducked bed. The master is untouched, so a
   re-render or a re-narration of the master never compounds anything.
 - `stitch: ["<id>", ...]` concatenates whole masters of the same shape and
   codec at the container level; a mismatch is refused. Stitching takes of
