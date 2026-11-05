@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from seshat import core, manager as manager_module, media, narration, recording, render, render_ffmpeg, workers  # noqa: E402
+from seshat import core, manager as manager_module, media, narration, recording, render, render_ffmpeg, render_narration, workers  # noqa: E402
 from support import completed_job, event  # noqa: E402
 
 
@@ -229,6 +229,56 @@ class ArgvShapeTests(unittest.TestCase):
                               "width": 1280, "height": 720}]},
             ])
         self.assertIn("shape or codec differs", str(ctx.exception))
+
+
+class RenderNarrateAnchorTests(unittest.TestCase):
+    def build_edit(self) -> render.Edit:
+        edit = render.Edit(trim_start_ms=8_298.391, trim_end_ms=61_301.038)
+        edit.events = [
+            render.RenderEvent("d", "display_stage", True, {"stage": "releases", "chapter": "Releases"}, 10_298.391, 2_000.0),
+            render.RenderEvent("d", "display_stage", True, {"stage": "modules"}, 17_298.649, 9_000.258),
+            render.RenderEvent("d", "display_stage", True, {"stage": "releases"}, 24_298.908, 16_000.517),
+            render.RenderEvent("d", "display_stage", True, {"stage": "outro"}, 59_301.038, 51_002.647),
+        ]
+        return edit
+
+    def test_at_ms_stays_render_relative(self) -> None:
+        row = render_narration.resolve_render_anchor(
+            {"anchor": {"at_ms": 1_500.0}, "text": "hi"}, self.build_edit().events, 53_000.0, 1
+        )
+        self.assertEqual(row["anchor"], {"at_ms": 1_500.0})
+
+    def test_at_ms_past_the_render_is_refused(self) -> None:
+        with self.assertRaises(core.ToolError) as ctx:
+            render_narration.resolve_render_anchor(
+                {"anchor": {"at_ms": 53_500.0}, "text": "hi"}, self.build_edit().events, 53_000.0, 1
+            )
+        self.assertIn("past the render's extent", str(ctx.exception))
+
+    def test_event_id_is_a_position_in_the_map(self) -> None:
+        row = render_narration.resolve_render_anchor(
+            {"anchor": {"event_id": 4}, "text": "hi"}, self.build_edit().events, 53_000.0, 1
+        )
+        self.assertEqual(row["anchor"], {"at_ms": 51_002.647})
+
+    def test_match_resolves_to_exactly_one_row(self) -> None:
+        edit = self.build_edit()
+        row = render_narration.resolve_render_anchor(
+            {"anchor": {"match": {"payload": {"stage": "modules"}}}, "text": "hi"},
+            edit.events, 53_000.0, 1,
+        )
+        self.assertEqual(row["anchor"], {"at_ms": 9_000.258})
+        with self.assertRaises(core.ToolError) as ctx:
+            render_narration.resolve_render_anchor(
+                {"anchor": {"match": {"tool": "display_stage", "payload": {"stage": "releases"}}}, "text": "hi"},
+                edit.events, 53_000.0, 1,
+            )
+        self.assertIn("exactly one", str(ctx.exception))
+        exact = render_narration.resolve_render_anchor(
+            {"anchor": {"match": {"tool": "display_stage", "payload": {"stage": "releases"}, "nth": 2}}, "text": "hi"},
+            edit.events, 53_000.0, 1,
+        )
+        self.assertEqual(exact["anchor"], {"at_ms": 16_000.517})
 
 
 class StitchHoldsNoLockTests(unittest.TestCase):

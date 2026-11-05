@@ -26,6 +26,7 @@ from . import (
     recording,
     render,
     render_ffmpeg,
+    render_narration,
     store,
     timeline,
     tts,
@@ -399,6 +400,10 @@ def build_render(
                 render_ffmpeg.teaser_argv(out_path, start_ms, end_ms, teaser_path), timeout=300.0
             )
             meta["teaser"] = str(teaser_path)
+        if plan.get("narrate") is not None:
+            meta["narration"] = render_narration.narrate_render(
+                manager, job, edit, plan, out_path, meta
+            )
     except core.ToolError as exc:
         rejected = candidate.with_name(candidate.name + ".reject")
         try:

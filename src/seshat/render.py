@@ -37,6 +37,24 @@ RENDER_OPERATION_SCHEMA = (
     "teaser",
     "chapters",
     "stitch",
+    "narrate",
+    "engine",
+    "voice",
+)
+
+NARRATE_ARGUMENT_KEYS = (
+    "engine",
+    "voice",
+    "fit",
+    "offset_ms",
+    "tail_ms",
+    "subtitles",
+    "position",
+    "rate",
+    "volume",
+    "pitch",
+    "length_scale",
+    "variant",
 )
 
 
@@ -163,6 +181,17 @@ def parse_render_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(profile, str) or profile not in RENDER_PROFILES:
             raise core.ToolError("profile must be one of: " + ", ".join(RENDER_PROFILES))
         plan["profile"] = profile
+    narrate = arguments.get("narrate")
+    if narrate is not None:
+        if not isinstance(narrate, list) or not narrate:
+            raise core.ToolError("narrate must be a non-empty list of anchored segments")
+        plan["narrate"] = narrate
+    for key in ("engine", "voice", "fit", "offset_ms", "tail_ms", "subtitles",
+                "position", "rate", "volume", "pitch", "length_scale", "variant"):
+        value = arguments.get(key)
+        if value is None or key in ("engine",) and value == "auto":
+            continue
+        plan[key] = value
     stitch = arguments.get("stitch")
     if stitch is not None:
         if not isinstance(stitch, list) or not stitch or not all(

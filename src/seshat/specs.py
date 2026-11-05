@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from . import core, recording, scenes, streams, tts
+from .specs_render import render_spec
 
 
 def tool_specs() -> list[dict[str, Any]]:
     return [
+        *render_spec(),
         {
             "name": "seshat_info",
             "description": (
@@ -197,83 +199,6 @@ def tool_specs() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["destination"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "name": "recording_render",
-            "description": (
-                "Post-produce a completed take from its own timeline: trim to the "
-                "events plus pad, speed up idle gaps, cut to zoom windows over the "
-                "coordinates the events carry, pulse a marker box, rescale to a "
-                "profile (1080p/720p/vertical), and derive a poster PNG, a teaser "
-                "GIF or chapters from labeled events. The finalized master is never "
-                "modified; the render is a new variant in the take's store "
-                "directory. Answers synchronously with every event's remapped "
-                "t_ms, so narration can follow with at_ms anchors. stitch takes "
-                "whole finalized masters into one container instead."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "Take id; defaults to the latest take.",
-                    },
-                    "trim": {
-                        "type": "object",
-                        "properties": {
-                            "pad_ms": {"type": "number", "minimum": 0, "maximum": 2000}
-                        },
-                        "additionalProperties": False,
-                        "description": "Keep first-event to last-event, plus pad.",
-                    },
-                    "idle": {
-                        "type": "object",
-                        "properties": {
-                            "min_gap_ms": {"type": "number", "minimum": 200, "maximum": 30000},
-                            "speed": {"type": "number", "minimum": 1.05, "maximum": 16},
-                        },
-                        "additionalProperties": False,
-                        "description": "Speed up every event-free gap this long.",
-                    },
-                    "zoom": {
-                        "type": "object",
-                        "properties": {
-                            "scale": {"type": "number", "minimum": 1.1, "maximum": 4},
-                            "hold_ms": {"type": "number", "minimum": 0, "maximum": 10000},
-                        },
-                        "additionalProperties": False,
-                        "description": "Hold a hard-cut zoom centered on each coordinated event.",
-                    },
-                    "markers": {
-                        "type": "boolean",
-                        "description": "Pulse a marker box at each coordinated event.",
-                    },
-                    "profile": {
-                        "type": "string",
-                        "enum": ["native", "1080p", "720p", "vertical"],
-                        "description": "Output shape; vertical crops to 9:16 around the pointer.",
-                    },
-                    "poster": {"type": "boolean", "description": "Also write <render>.poster.png."},
-                    "teaser": {"type": "boolean", "description": "Also write <render>.teaser.gif."},
-                    "chapters": {
-                        "type": "boolean",
-                        "description": (
-                            "Build chapters from events whose payload carries a chapter "
-                            "label; muxed into the render and written as a YouTube list."
-                        ),
-                    },
-                    "stitch": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string"},
-                        "description": (
-                            "Concat these finalized take ids (in this session's store) "
-                            "before the rendered take, at the container level."
-                        ),
-                    },
-                },
                 "additionalProperties": False,
             },
         },
