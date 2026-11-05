@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.5.0](https://github.com/blackopsrepl/seshat/compare/v0.4.0...v0.5.0) (2026-11-05)
+
+
+### Features
+
+* **render:** narrate the rendered cut on its own clock 5be01ee
+
+
+### Documentation
+
+* the narrate operation is part of the render surface beff5bc
+
 ## [0.4.0](https://github.com/blackopsrepl/seshat/compare/v0.3.0...v0.4.0) (2026-11-04)
 
 
